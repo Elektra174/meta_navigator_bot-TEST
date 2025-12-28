@@ -2,526 +2,609 @@ import os
 import asyncio
 import traceback
 from datetime import datetime
+from typing import List, Dict, Any, Optional
+
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
 from cerebras.cloud.sdk import AsyncCerebras
 from aiohttp import web
 
-# --- КОНФИГУРАЦИЯ ---
-TOKEN = os.getenv("BOT_TOKEN")
-CEREBRAS_API_KEY = os.getenv("AI_API_KEY")
-CHANNEL_ID = "@metaformula_life"
-ADMIN_ID = 7830322013
 
-# Прямые ссылки на ресурсы
-LOGO_START_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/logo11.png"
-LOGO_AUDIT_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/logo.png"
-GUIDE_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/guide.pdf"
-MASTERCLASS_URL = "https://youtube.com/playlist?list=ваш_плейлист"  # Замените на реальную ссылку
+# =========================
+# CONFIG
+# =========================
+TOKEN = os.getenv("BOT_TOKEN", "").strip()
+CEREBRAS_API_KEY = os.getenv("AI_API_KEY", "").strip()
 
-# Инициализация клиентов
-client = AsyncCerebras(api_key=CEREBRAS_API_KEY) if CEREBRAS_API_KEY else None
+CHANNEL_ID = os.getenv("CHANNEL_ID", "@metaformula_life").strip()
+ADMIN_ID = int(os.getenv("ADMIN_ID", "7830322013").strip())
+
+PORT = int(os.getenv("PORT", "8080"))
+
+# Assets
+LOGO_START_URL = os.getenv(
+    "LOGO_START_URL",
+    "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/logo11.png"
+).strip()
+
+LOGO_AUDIT_URL = os.getenv(
+    "LOGO_AUDIT_URL",
+    "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/logo.png.png"
+).strip()
+
+GUIDE_URL = os.getenv(
+    "GUIDE_URL",
+    "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/guide.pdf"
+).strip()
+
+MASTERCLASS_URL = os.getenv("MASTERCLASS_URL", "https://www.youtube.com/").strip()
+
+
+# =========================
+# VALIDATION (fail-fast)
+# =========================
+if not TOKEN:
+    raise RuntimeError("BOT_TOKEN is missing")
+if not CEREBRAS_API_KEY:
+    raise RuntimeError("AI_API_KEY is missing")
+
+
+# =========================
+# AI / BOT INIT
+# =========================
+client = AsyncCerebras(api_key=CEREBRAS_API_KEY)
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Глобальные счетчики для мониторинга
+
+# =========================
+# MONITORING STATE
+# =========================
 error_counter = 0
 api_failures = 0
-last_error_time = None
+last_error_time: Optional[datetime] = None
 
-class AuditState(StatesGroup):
-    answering_questions = State()
 
-# Вопросы для аудита (по глоссарию)
-QUESTIONS = [
+# =========================
+# GLOSSARY (STRICT TERMS)
+# =========================
+# Источник — внутренний потенциал и энергия.
+# Доминанта — очаг напряжения в мозге (затык), ворующий внимание.
+# Функция — социальный софт, роли и страхи, блокирующие Источник.
+# Точка Сдвига — мгновение тишины для перехвата управления (Ctrl+Alt+Del).
+# Свободный ход — реализация без внутреннего трения (аналог У-вэй).
+# Состояние Автора — жизнь из Центра Источника.
+
+
+# =========================
+# QUESTIONS (ASK ONE BY ONE, STRICT TEXT)
+# =========================
+QUESTIONS: List[str] = [
     "В каком моменте жизни Вы сейчас чувствуете самый сильный застой или «пробуксовку»?",
     "Опишите Ваш «фоновый шум». Какие мысли крутятся в голове сами по себе, когда Вы ничем не заняты?",
     "Назовите Вашу Доминанту: если бы Ваш «затык» был физическим предметом в теле — на что бы он был похож по форме и весу?",
     "Что Вас больше всего истощает в текущем режиме «Функции» (беге по кругу)?",
     "Какое качество в другом человеке Вас раздражает больше всего? Какую свободу он проявляет, которую Вы себе сейчас запрещаете?",
     "Как Вам кажется, сколько еще энергии у Вас осталось на поддержание Автопилота? (Напр: топливо на нуле).",
-    "Готовы ли Вы прямо сейчас найти свою Точку Сдвига и перейти в Свободный ход?"
+    "Готовы ли Вы прямо сейчас найти свою Точку Сдвига и перейти в Свободный ход?",
 ]
 
-SYSTEM_PROMPT = """
-Ты — Мета-Навигатор, когнитивный инженер проекта «Метаформула жизни». 
-Твоя роль: проводник, который помогает пользователям провести аудит Автопилота.
 
-ГЛОССАРИЙ (используй строго):
-- Источник: внутренний потенциал и энергия пользователя
-- Доминанта: очаг напряжения в мозге (затык), ворующий внимание
-- Функция: социальный софт, роли и страхи, блокирующие Источник
-- Точка Сдвига: мгновение тишины для перехвата управления (Ctrl+Alt+Del)
-- Свободный ход: реализация без внутреннего трения (аналог У-вэй)
-- Состояние Автора: жизнь из Центра Источника
+# =========================
+# SYSTEM PROMPT (ENGINEER-GUIDE, NO WATER / ESOTERICS)
+# =========================
+SYSTEM_PROMPT = """
+Вы — ИИ-Навигатор проекта «Метаформула жизни». Ваша роль: инженер-проводник, который проводит когнитивный аудит пользователя по его 7 ответам.
+
+ТЕРМИНЫ (использовать строго и по смыслу):
+- Источник — внутренний потенциал и энергия.
+- Доминанта — очаг напряжения в мозге (затык), ворующий внимание.
+- Функция — социальный софт, роли и страхи, блокирующие Источник.
+- Точка Сдвига — мгновение тишины для перехвата управления (Ctrl+Alt+Del).
+- Свободный ход — реализация без внутреннего трения (аналог У-вэй).
+- Состояние Автора — жизнь из Центра Источника.
 
 СТИЛЬ:
-- Обращение на «Вы»
-- Экспертный, спокойный тон
-- Без эзотерики и «воды»
-- Конкретные инсайты
-- Использование терминов из глоссария
+- Обращение только на «Вы».
+- Тон: экспертный, спокойный, без «воды» и эзотерики.
+- Пишите по делу: формулировки короткие, точные, проверяемые.
+- Используйте Markdown-заголовки (# и ##). Не используйте двойные звездочки (**).
 
-СТРУКТУРА ОТЧЕТА:
-# Результаты Аудита Автопилота
-## Ваш Индекс Автоматизма: [X]%
+СТРУКТУРА ОТЧЕТА (строго в этом порядке):
+# Когнитивный аудит: ИИ-Навигатор
 
----
-## 🧲 Ваша Доминанта
-[Анализ «затыка» как физического предмета в теле. Как он блокирует Ваш Источник?]
+## Индекс Автоматизма (в %)
+Дайте число 0–100 и 2–3 строки обоснования по ответам.
 
----
-## ⚙️ Режим Функции  
-[Анализ социального софта и ролей, которые создают трение. Что истощает?]
+## Анализ Доминанты (предмета в теле)
+Опишите, что именно «ворует внимание», как это проявляется телесно и когнитивно, и какой триггер поддерживает Доминанту.
 
----
-## 🔑 Ваша Метаформула
-**[Код-фраза из 3-5 слов]**
+## Анализ режима Функции
+Опишите, какая роль/страх/обязательство удерживает пользователя в цикле и как это блокирует Источник. Укажите 2–3 типичных паттерна поведения.
 
----
-## 🎯 Инструкция по активации
-[Как найти Точку Сдвига и перейти в Свободный ход. Практические шаги.]
+## Персональная Метаформула (код-фраза)
+Дайте короткую код-фразу из 5–9 слов (без эзотерики). Она должна быть практичной и запоминаемой.
 
----
-## 💫 Состояние Автора
-[Как будет выглядеть Ваша жизнь при реализации из Источника?]
+## Инструкция по входу в Точку Сдвига
+Дайте пошаговую инструкцию на 60–120 секунд: что сделать телом/вниманием/дыханием, чтобы найти Точку Сдвига и перейти в Свободный ход.
+Добавьте 1 «аварийный протокол» на 15 секунд на случай перегруза.
+
+Форматируйте так, чтобы это можно было сразу применить.
 """
 
-async def send_admin_alert(alert_type: str, details: str, traceback_info: str = ""):
-    """Отправка оповещения администратору"""
-    global error_counter, api_failures
-    
-    try:
-        timestamp = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-        
-        alert_messages = {
-            "api_failure": "🚨 *СБОЙ API CEREBRAS*",
-            "bot_crash": "💥 *КРИТИЧЕСКАЯ ОШИБКА БОТА*",
-            "rate_limit": "⏱️ *ЛИМИТ API ИСЧЕРПАН*",
-            "warning": "⚠️ *ПРЕДУПРЕЖДЕНИЕ*"
-        }
-        
-        message = f"{alert_messages.get(alert_type, '⚠️ *ПРОБЛЕМА*')}\n\n"
-        message += f"🕒 *Время:* {timestamp}\n"
-        message += f"📊 *Тип:* {alert_type}\n\n"
-        message += f"📝 *Детали:*\n{details[:500]}\n"
-        
-        if traceback_info:
-            traceback_short = traceback_info[-1000:] if len(traceback_info) > 1000 else traceback_info
-            message += f"\n🔧 *Traceback:*\n```\n{traceback_short}\n```"
-        
-        # Добавляем статистику
-        message += f"\n📈 *Статистика:*\n• Ошибок: {error_counter}\n• Сбоев API: {api_failures}"
-        
-        await bot.send_message(chat_id=ADMIN_ID, text=message, parse_mode="Markdown")
-        return True
-    except Exception as e:
-        print(f"Не удалось отправить алерт: {e}")
-        return False
 
-async def send_report_to_admin(user: types.User, answers: list, report: str):
-    """Отправка полного отчета администратору"""
-    try:
-        user_info = (
-            "📊 *НОВЫЙ АУДИТ ЗАВЕРШЕН*\n\n"
-            f"👤 *Пользователь:*\n"
-            f"• ID: `{user.id}`\n"
-            f"• Имя: {user.first_name or '—'}\n"
-            f"• Username: @{user.username or 'нет'}\n"
-            f"• Время: {datetime.now().strftime('%d.%m %H:%M')}\n\n"
-        )
-        
-        # Добавляем ответы
-        user_info += "📝 *Ответы на вопросы:*\n"
-        for i, answer in enumerate(answers):
-            if i < len(QUESTIONS):
-                user_info += f"\n{i+1}. *{QUESTIONS[i][:50]}...*\n"
-            user_info += f"   {answer[:200]}\n"
-        
-        # Отправляем ответы
-        await bot.send_message(chat_id=ADMIN_ID, text=user_info[:4000], parse_mode="Markdown")
-        
-        # Отправляем отчет AI отдельно
-        report_msg = f"🤖 *ОТЧЕТ AI:*\n\n{report[:3500]}"
-        await bot.send_message(chat_id=ADMIN_ID, text=report_msg, parse_mode="Markdown")
-        
-        return True
-    except Exception as e:
-        await send_admin_alert("warning", f"Ошибка отправки отчета. User ID: {user.id}", str(e))
-        return False
+# =========================
+# FSM
+# =========================
+class AuditState(StatesGroup):
+    answering = State()
+
+
+# =========================
+# HELPERS
+# =========================
+def _now_str() -> str:
+    return datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+
+
+def _split_telegram(text: str, limit: int = 3800) -> List[str]:
+    """
+    Telegram hard limit ~4096; keep safety margin.
+    Split by paragraphs first, then hard split if needed.
+    """
+    if not text:
+        return [""]
+
+    chunks: List[str] = []
+    buff = ""
+
+    for part in text.split("\n\n"):
+        candidate = part if not buff else (buff + "\n\n" + part)
+        if len(candidate) <= limit:
+            buff = candidate
+        else:
+            if buff:
+                chunks.append(buff)
+                buff = ""
+            # part may still exceed limit
+            while len(part) > limit:
+                chunks.append(part[:limit])
+                part = part[limit:]
+            buff = part
+
+    if buff:
+        chunks.append(buff)
+
+    return chunks
+
+
+async def send_admin_alert(alert_type: str, details: str, tb: str = "") -> None:
+    """
+    Alerts admin on API failures and bot crashes.
+    """
+    global error_counter, api_failures, last_error_time
+
+    header_map = {
+        "api_failure": "🚨 СБОЙ API CEREBRAS",
+        "connection_error": "🔌 ПРОБЛЕМА СВЯЗИ",
+        "bot_crash": "💥 КРИТИЧЕСКАЯ ОШИБКА БОТА",
+        "rate_limit": "⏱️ ЛИМИТ API",
+        "warning": "⚠️ ПРЕДУПРЕЖДЕНИЕ",
+    }
+    header = header_map.get(alert_type, "⚠️ ПРОБЛЕМА")
+
+    msg = (
+        f"{header}\n\n"
+        f"🕒 Время: {_now_str()}\n"
+        f"📊 Тип: {alert_type}\n\n"
+        f"📝 Детали:\n{details}\n\n"
+        f"📈 Статистика:\n"
+        f"• Ошибок за сессию: {error_counter}\n"
+        f"• Сбоев API: {api_failures}\n"
+        f"• Последняя ошибка: {last_error_time.strftime('%d.%m.%Y %H:%M:%S') if last_error_time else '—'}\n"
+    )
+
+    if tb:
+        tb_cut = tb[:1500]
+        msg += f"\n🔧 Traceback:\n{tb_cut}"
+
+    for chunk in _split_telegram(msg):
+        try:
+            await bot.send_message(chat_id=ADMIN_ID, text=chunk)
+        except Exception:
+            # If admin messages fail, only stdout remains.
+            print("ADMIN ALERT SEND FAILED")
+            print(chunk)
+
 
 async def is_subscribed(user_id: int) -> bool:
-    """Проверка подписки на канал"""
+    """
+    Check user subscription in CHANNEL_ID.
+    """
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
-        return member.status in ["member", "administrator", "creator"]
-    except Exception as e:
-        await send_admin_alert("warning", f"Ошибка проверки подписки. User ID: {user_id}", str(e))
+        return member.status in ("member", "administrator", "creator")
+    except Exception:
+        # This can happen if bot isn't admin in the channel or privacy settings block it.
+        await send_admin_alert(
+            "warning",
+            f"Ошибка проверки подписки. user_id={user_id}, channel={CHANNEL_ID}",
+            traceback.format_exc(),
+        )
         return False
 
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message, state: FSMContext):
-    """Обработчик команды /start"""
-    global error_counter
-    
+
+async def send_report_to_admin(user: types.User, qa: List[Dict[str, str]], report: str) -> None:
+    """
+    Send admin: user info, 7 answers, final AI report.
+    Split into multiple messages if needed.
+    """
     try:
-        await state.clear()
-        
-        if not await is_subscribed(message.from_user.id):
-            # Пользователь не подписан - показываем кнопки
-            builder = InlineKeyboardBuilder()
-            builder.row(
-                types.InlineKeyboardButton(
-                    text="📢 Присоединиться к каналу", 
-                    url="https://t.me/metaformula_life"
-                )
-            )
-            builder.row(
-                types.InlineKeyboardButton(
-                    text="✅ Я в канале! Начать Аудит", 
-                    callback_data="check_sub"
-                )
-            )
-            
-            await message.answer_photo(
-                photo=LOGO_START_URL,
-                caption=(
-                    "👋 *Добро пожаловать в Мета-Навигатор*\n\n"
-                    "Я — ИИ-проводник проекта «Метаформула жизни».\n\n"
-                    "Помогу Вам провести аудит Автопилота, найти Доминанту "
-                    "и активировать Вашу персональную Метаформулу.\n\n"
-                    "📌 *Для начала работы необходимо подписаться на канал:*"
-                ),
-                reply_markup=builder.as_markup(),
-                parse_mode="Markdown"
-            )
-        else:
-            # Пользователь подписан - сразу начинаем аудит
-            await start_audit(message, state)
-            
-    except Exception as e:
-        error_counter += 1
-        await send_admin_alert(
-            "bot_crash",
-            f"Ошибка в /start. User: {message.from_user.id}",
-            traceback.format_exc()
+        username = f"@{user.username}" if user.username else "—"
+        head = (
+            "🔔 НОВЫЙ КОГНИТИВНЫЙ АУДИТ\n\n"
+            f"👤 Пользователь:\n"
+            f"• ID: {user.id}\n"
+            f"• Имя: {user.first_name or '—'}\n"
+            f"• Username: {username}\n"
+            f"• Дата: {_now_str()}\n\n"
+            "🧾 Ответы (Q/A):\n"
         )
-        await message.answer("⚠️ Произошла техническая ошибка. Попробуйте позже.")
 
-@dp.callback_query(F.data == "check_sub")
-async def check_subscription(callback: types.CallbackQuery, state: FSMContext):
-    """Проверка подписки после нажатия кнопки"""
-    await callback.answer()  # Убираем "часики"
-    
-    if await is_subscribed(callback.from_user.id):
-        await callback.message.answer("✅ Доступ подтвержден. Запускаю аудит...")
-        await start_audit(callback.message, state)
-    else:
-        await callback.answer("❌ Вы еще не подписаны на канал!", show_alert=True)
+        lines = []
+        for i, item in enumerate(qa, start=1):
+            q = item.get("q", "").strip()
+            a = item.get("a", "").strip()
+            lines.append(f"{i}) Q: {q}\n   A: {a}")
 
-async def start_audit(message: types.Message, state: FSMContext):
-    """Начало процедуры аудита"""
-    try:
-        # Инициализируем состояние: current_q=0, answers=[]
-        await state.update_data(current_q=0, answers=[])
-        
-        # Отправляем логотип аудита
-        try:
-            await message.answer_photo(
-                photo=LOGO_AUDIT_URL,
-                caption=(
-                    "🌀 *НАЧИНАЕМ АУДИТ АВТОПИЛОТА*\n\n"
-                    "Сейчас я задам Вам 7 вопросов.\n"
-                    "Отвечайте искренне — это Ваш диалог с собой.\n\n"
-                    "Каждый ответ приближает к Вашей Метаформуле."
-                ),
-                parse_mode="Markdown"
-            )
-        except:
-            await message.answer("🌀 *НАЧИНАЕМ АУДИТ АВТОПИЛОТА*...", parse_mode="Markdown")
-        
-        await asyncio.sleep(1)
-        
-        # Отправляем первый вопрос
-        await message.answer(f"📝 *Вопрос 1 из 7:*\n\n{QUESTIONS[0]}", parse_mode="Markdown")
-        await state.set_state(AuditState.answering_questions)
-        
-    except Exception as e:
-        global error_counter
-        error_counter += 1
+        body = "\n\n".join(lines)
+        full = head + body + "\n\n📊 AI-отчет:\n\n" + (report or "—")
+
+        for chunk in _split_telegram(full):
+            await bot.send_message(chat_id=ADMIN_ID, text=chunk)
+
+    except Exception:
         await send_admin_alert(
-            "bot_crash", 
-            f"Ошибка запуска аудита. User: {message.from_user.id}", 
-            traceback.format_exc()
+            "connection_error",
+            f"Ошибка отправки отчета админу. user_id={user.id}",
+            traceback.format_exc(),
         )
-        await message.answer("⚠️ Ошибка запуска аудита. Попробуйте снова.")
 
-@dp.message(AuditState.answering_questions)
-async def process_answer(message: types.Message, state: FSMContext):
-    """Обработка ответов на вопросы"""
-    global error_counter
-    
-    try:
-        data = await state.get_data()
-        current_q = data.get('current_q', 0)
-        answers = data.get('answers', [])
-        
-        # Сохраняем ответ пользователя
-        answers.append(message.text.strip())
-        
-        # Переходим к следующему вопросу
-        next_q = current_q + 1
-        
-        if next_q < len(QUESTIONS):
-            # Обновляем состояние и задаем следующий вопрос
-            await state.update_data(current_q=next_q, answers=answers)
-            
-            # Отправляем следующий вопрос
-            question_text = f"📝 *Вопрос {next_q + 1} из {len(QUESTIONS)}:*\n\n{QUESTIONS[next_q]}"
-            await message.answer(question_text, parse_mode="Markdown")
-            
-        else:
-            # Все вопросы отвечены - генерируем отчет
-            await state.update_data(answers=answers)
-            
-            # Уведомляем пользователя
-            await message.answer(
-                "🌀 *Анализирую Ваши ответы...*\n\n"
-                "Навигатор вычисляет Ваш Индекс Автоматизма и ищет Метаформулу.",
-                parse_mode="Markdown"
-            )
-            
-            # Генерируем AI-отчет
-            report = await generate_ai_report(answers)
-            
-            if report:
-                # Отправляем отчет пользователю
-                await message.answer(report, parse_mode="Markdown")
-                
-                # Отправляем отчет администратору
-                await send_report_to_admin(message.from_user, answers, report)
-                
-                # Создаем клавиатуру с финальными опциями
-                builder = ReplyKeyboardBuilder()
-                builder.row(
-                    types.KeyboardButton(text="📥 Скачать Гайд «Ревизия Маршрута»"),
-                    types.KeyboardButton(text="🎥 Смотреть Мастер-класс «Сдвиг Оптики»")
-                )
-                builder.row(types.KeyboardButton(text="🔄 Начать новый аудит"))
-                
-                # Отправляем финальное сообщение
-                await message.answer(
-                    "✅ *Аудит завершен*\n\n"
-                    "Ваша Метаформула активирована. Что дальше?\n\n"
-                    "Выберите действие:",
-                    reply_markup=builder.as_markup(resize_keyboard=True),
-                    parse_mode="Markdown"
-                )
-            else:
-                await message.answer(
-                    "⚠️ *Ошибка генерации отчета*\n\n"
-                    "Попробуйте начать аудит заново с команды /start",
-                    parse_mode="Markdown"
-                )
-            
-            # Очищаем состояние FSM
-            await state.clear()
-            
-    except Exception as e:
-        error_counter += 1
-        await send_admin_alert(
-            "bot_crash",
-            f"Ошибка обработки ответа. User: {message.from_user.id}",
-            traceback.format_exc()
-        )
-        await message.answer("⚠️ Ошибка обработки ответа. Попробуйте снова с /start")
 
-@dp.message(F.text == "📥 Скачать Гайд «Ревизия Маршрута»")
-async def send_guide(message: types.Message):
-    """Отправка PDF-гайда"""
+def _final_keyboard() -> types.InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.row(types.InlineKeyboardButton(
+        text="Скачать Гайд «Ревизия Маршрута»",
+        callback_data="get_guide"
+    ))
+    kb.row(types.InlineKeyboardButton(
+        text="Смотреть Мастер-класс «Сдвиг Оптики»",
+        url=MASTERCLASS_URL
+    ))
+    return kb.as_markup()
+
+
+def _subscribe_keyboard() -> types.InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.row(types.InlineKeyboardButton(
+        text="Подписаться на канал",
+        url=f"https://t.me/{CHANNEL_ID.lstrip('@')}"
+    ))
+    kb.row(types.InlineKeyboardButton(
+        text="Я подписался(ась). Проверить доступ",
+        callback_data="check_sub"
+    ))
+    return kb.as_markup()
+
+
+async def start_audit(message: types.Message, state: FSMContext) -> None:
+    """
+    If subscribed: show LOGO_AUDIT_URL and first question.
+    Must init answers correctly: answers=[] (fix answers= bug).
+    """
+    await state.clear()
+    await state.update_data(current_q=0, answers=[])  # IMPORTANT: answers=[]
+
+    # Audit logo
     try:
-        await message.answer_document(
-            document=GUIDE_URL,
+        await message.answer_photo(
+            photo=LOGO_AUDIT_URL,
             caption=(
-                "📚 *Гайд «Ревизия Маршрута»*\n\n"
-                "Пошаговая инструкция по активации Вашей Метаформулы.\n"
-                "Содержит практики для перехода в Свободный ход."
-            ),
-            parse_mode="Markdown"
+                "ИИ-Навигатор запускает когнитивный аудит.\n\n"
+                "Я задам 7 вопросов. Отвечайте по одному сообщению на каждый вопрос."
+            )
         )
-    except Exception as e:
+    except Exception:
         await message.answer(
-            "⚠️ *Гайд временно недоступен*\n\n"
-            f"Ссылка для скачивания: {GUIDE_URL}",
-            parse_mode="Markdown"
+            "ИИ-Навигатор запускает когнитивный аудит.\n\n"
+            "Я задам 7 вопросов. Отвечайте по одному сообщению на каждый вопрос."
         )
 
-@dp.message(F.text == "🎥 Смотреть Мастер-класс «Сдвиг Оптики»")
-async def send_masterclass(message: types.Message):
-    """Отправка ссылки на мастер-класс"""
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        types.InlineKeyboardButton(
-            text="▶️ Смотреть на YouTube", 
-            url=MASTERCLASS_URL
-        )
-    )
-    
-    await message.answer(
-        "🎬 *Мастер-класс «Сдвиг Оптики»*\n\n"
-        "Видео-практикум по переходу из режима Функции в Состояние Автора.\n\n"
-        "Нажмите кнопку ниже для просмотра:",
-        reply_markup=builder.as_markup(),
-        parse_mode="Markdown"
-    )
+    await message.answer(QUESTIONS[0])
+    await state.set_state(AuditState.answering)
 
-@dp.message(F.text == "🔄 Начать новый аудит")
-async def restart_audit(message: types.Message, state: FSMContext):
-    """Перезапуск аудита"""
-    await cmd_start(message, state)
 
-async def generate_ai_report(answers: list) -> str:
-    """Генерация AI-отчета через Cerebras API"""
+async def generate_ai_report(qa: List[Dict[str, str]]) -> str:
+    """
+    Cerebras Async. messages must be list[dict].
+    """
     global error_counter, api_failures, last_error_time
-    
-    if not client:
-        return "❌ *Сервис AI недоступен*\n\nПопробуйте позже или обратитесь к администратору."
-    
+
+    user_input_lines = []
+    for i, item in enumerate(qa, start=1):
+        user_input_lines.append(f"{i}) {item['q']}\nОтвет: {item['a']}")
+    user_input = "\n\n".join(user_input_lines)
+
     try:
-        # Формируем контекст для AI
-        user_input = "Ответы пользователя на вопросы аудита:\n\n"
-        for i, answer in enumerate(answers):
-            if i < len(QUESTIONS):
-                user_input += f"ВОПРОС {i+1}: {QUESTIONS[i]}\n"
-            user_input += f"ОТВЕТ: {answer}\n\n{'='*50}\n\n"
-        
-        # Отправляем запрос к Cerebras API
         response = await client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_input}
-            ],
             model="llama-3.3-70b",
             temperature=0.4,
             top_p=0.9,
-            max_tokens=2048
+            max_completion_tokens=2048,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_input},
+            ],
         )
-        
-        # Сбрасываем счетчик ошибок API при успехе
+
         api_failures = 0
-        
-        # Извлекаем ответ (структура может различаться)
-        if hasattr(response, 'choices') and len(response.choices) > 0:
-            choice = response.choices[0]
-            if hasattr(choice, 'message') and hasattr(choice.message, 'content'):
-                return choice.message.content
-            elif hasattr(choice, 'text'):
-                return choice.text
-        
-        return "Не удалось обработать ответ AI."
-        
+        return (response.choices[0].message.content or "").strip() or "Ошибка: пустой ответ модели."
+
     except Exception as e:
         error_counter += 1
         api_failures += 1
         last_error_time = datetime.now()
-        
-        error_msg = str(e).lower()
-        
-        # Определяем тип ошибки для алерта
-        if "rate" in error_msg or "quota" in error_msg or "limit" in error_msg:
+
+        err = str(e).lower()
+        if "rate limit" in err or "quota" in err or "limit" in err:
             alert_type = "rate_limit"
-            details = "Исчерпан лимит запросов к Cerebras API"
-        elif "connection" in error_msg or "timeout" in error_msg:
+            details = "Исчерпан лимит запросов к Cerebras API."
+        elif "connection" in err or "timeout" in err or "network" in err:
+            alert_type = "connection_error"
+            details = "Сбой соединения с Cerebras API (timeout/connection/network)."
+        elif "authentication" in err or "key" in err or "token" in err:
             alert_type = "api_failure"
-            details = "Проблема соединения с Cerebras API"
-        elif "auth" in error_msg or "key" in error_msg:
+            details = "Ошибка аутентификации Cerebras API (ключ/токен)."
+        elif "service unavailable" in err or "503" in err:
             alert_type = "api_failure"
-            details = "Ошибка аутентификации API ключа"
+            details = "Cerebras API временно недоступен (503)."
         else:
             alert_type = "api_failure"
-            details = f"Ошибка API: {error_msg[:200]}"
-        
-        # Отправляем алерт администратору
+            details = f"Неизвестная ошибка Cerebras API: {str(e)[:300]}"
+
         await send_admin_alert(alert_type, details, traceback.format_exc())
-        
-        # Возвращаем сообщение пользователю
+
+        # User-safe message
+        if alert_type == "rate_limit":
+            return (
+                "⏱️ Превышен лимит запросов.\n\n"
+                "Сервис генерации отчета временно недоступен. Попробуйте позже."
+            )
+        if alert_type == "connection_error":
+            return (
+                "🔌 Не удалось подключиться к сервису генерации отчета.\n\n"
+                "Попробуйте через несколько минут."
+            )
         return (
-            "⚠️ *Сервис AI временно недоступен*\n\n"
-            "Наш ИИ-навигатор перегружен.\n\n"
-            "Что можно сделать:\n"
-            "1. Попробуйте через 10-15 минут\n"
-            "2. Начните новый аудит с /start\n"
-            "3. Обратитесь в поддержку @metaformula_life"
+            "🚧 Сервис генерации отчета временно недоступен.\n\n"
+            "Попробуйте позже."
         )
 
-async def handle_health(request):
-    """Health check endpoint для Render"""
-    return web.Response(text="OK")
 
-async def send_startup_notification():
-    """Уведомление о запуске бота"""
+# =========================
+# HANDLERS
+# =========================
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message, state: FSMContext) -> None:
+    global error_counter
     try:
-        timestamp = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-        bot_info = await bot.get_me()
-        
-        message = (
-            "🚀 *МЕТА-НАВИГАТОР ЗАПУЩЕН*\n\n"
-            f"🕒 *Время:* {timestamp}\n"
-            f"🤖 *Бот:* @{bot_info.username}\n"
-            f"🔑 *Cerebras API:* {'✅' if CEREBRAS_API_KEY else '❌'}\n"
-            f"📊 *Порт:* {os.environ.get('PORT', 8080)}\n"
-            f"🌐 *Health Check:* доступен"
-        )
-        
-        await bot.send_message(chat_id=ADMIN_ID, text=message, parse_mode="Markdown")
-    except Exception as e:
-        print(f"Не удалось отправить startup notification: {e}")
+        await state.clear()
 
-async def main():
-    """Основная функция запуска бота"""
-    
-    # Запускаем веб-сервер для health check
-    app = web.Application()
-    app.router.add_get('/', handle_health)
-    app.router.add_get('/health', handle_health)
-    
-    runner = web.AppRunner(app)
-    await runner.setup()
-    
-    port = int(os.environ.get("PORT", 8080))
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
-    
-    # Отправляем уведомление о запуске
-    await send_startup_notification()
-    
-    print(f"✅ Мета-Навигатор запущен")
-    print(f"🤖 Bot: @{(await bot.get_me()).username}")
-    print(f"🔑 Cerebras API: {'✅ Настроен' if CEREBRAS_API_KEY else '❌ Нет ключа'}")
-    print(f"🌐 Health check: http://0.0.0.0:{port}/")
-    
-    # Запускаем бота
-    try:
-        await dp.start_polling(bot)
-    except Exception as e:
-        # Критическая ошибка - бот упал
+        if not await is_subscribed(message.from_user.id):
+            # Subscription gate
+            try:
+                await message.answer_photo(
+                    photo=LOGO_START_URL,
+                    caption=(
+                        "Чтобы начать когнитивный аудит, требуется подписка на канал проекта.\n\n"
+                        f"Канал: {CHANNEL_ID}"
+                    ),
+                    reply_markup=_subscribe_keyboard()
+                )
+            except Exception:
+                await message.answer(
+                    "Чтобы начать когнитивный аудит, требуется подписка на канал проекта.\n\n"
+                    f"Канал: {CHANNEL_ID}",
+                    reply_markup=_subscribe_keyboard()
+                )
+            return
+
+        # If subscribed: audit logo + first question immediately
+        await start_audit(message, state)
+
+    except Exception:
+        error_counter += 1
         await send_admin_alert(
             "bot_crash",
-            "Бот полностью остановлен!",
-            traceback.format_exc()
+            f"Ошибка /start. user_id={message.from_user.id}",
+            traceback.format_exc(),
+        )
+        await message.answer("⚠️ Техническая ошибка. Попробуйте позже.")
+
+
+@dp.callback_query(F.data == "check_sub")
+async def cb_check_sub(callback: types.CallbackQuery, state: FSMContext) -> None:
+    global error_counter
+    try:
+        if await is_subscribed(callback.from_user.id):
+            await callback.answer("Доступ подтвержден.")
+            # start audit
+            if callback.message:
+                await start_audit(callback.message, state)
+        else:
+            await callback.answer("Подписка не найдена. Подпишитесь на канал и попробуйте снова.", show_alert=True)
+    except Exception:
+        error_counter += 1
+        await send_admin_alert(
+            "bot_crash",
+            f"Ошибка check_sub. user_id={callback.from_user.id}",
+            traceback.format_exc(),
+        )
+
+
+@dp.message(AuditState.answering)
+async def handle_audit_answer(message: types.Message, state: FSMContext) -> None:
+    """
+    Ask questions strictly one by one after receiving previous answer.
+    """
+    global error_counter
+
+    try:
+        if not message.text or not message.text.strip():
+            await message.answer("Ответ должен быть текстом. Напишите ответ одним сообщением.")
+            return
+
+        data = await state.get_data()
+        q_idx = int(data.get("current_q", 0))
+        answers: List[Dict[str, str]] = data.get("answers", [])  # answers=[] fix already in start_audit
+
+        # Guard
+        if q_idx < 0 or q_idx >= len(QUESTIONS):
+            await state.clear()
+            await message.answer("Сессия сбилась. Запустите заново: /start")
+            return
+
+        # Store Q/A
+        answers.append({"q": QUESTIONS[q_idx], "a": message.text.strip()})
+
+        next_idx = q_idx + 1
+        if next_idx < len(QUESTIONS):
+            await state.update_data(current_q=next_idx, answers=answers)
+            await message.answer(QUESTIONS[next_idx])
+            return
+
+        # Final: generate report
+        await state.update_data(current_q=next_idx, answers=answers)
+        await message.answer("Принято. Формирую отчет аудита...")
+
+        report = await generate_ai_report(answers)
+
+        # Send report to user
+        # NOTE: Telegram Markdown is limited; still sending as requested.
+        for chunk in _split_telegram(report):
+            await message.answer(chunk)
+
+        # Send full data to admin
+        await send_report_to_admin(message.from_user, answers, report)
+
+        # Final buttons
+        await message.answer(
+            "Дальше — два варианта.",
+            reply_markup=_final_keyboard()
+        )
+
+        await state.clear()
+
+    except Exception:
+        error_counter += 1
+        await send_admin_alert(
+            "bot_crash",
+            f"Ошибка обработки ответов. user_id={message.from_user.id}",
+            traceback.format_exc(),
+        )
+        await message.answer("⚠️ Ошибка обработки. Запустите заново: /start")
+        await state.clear()
+
+
+@dp.callback_query(F.data == "get_guide")
+async def cb_get_guide(callback: types.CallbackQuery) -> None:
+    global error_counter
+    try:
+        if callback.message:
+            # Send PDF
+            await callback.message.answer_document(
+                document=GUIDE_URL,
+                caption="Гайд «Ревизия Маршрута»."
+            )
+        await callback.answer()
+    except Exception:
+        error_counter += 1
+        await send_admin_alert(
+            "bot_crash",
+            f"Ошибка отправки гайда. user_id={callback.from_user.id}",
+            traceback.format_exc(),
+        )
+        await callback.answer("Не удалось отправить PDF. Попробуйте позже.", show_alert=True)
+
+
+# Optional: global error catcher for unhandled exceptions in updates
+@dp.errors()
+async def global_error_handler(event: types.ErrorEvent) -> bool:
+    global error_counter
+    error_counter += 1
+    await send_admin_alert(
+        "bot_crash",
+        "Необработанная ошибка в обработке апдейта.",
+        traceback.format_exc(),
+    )
+    return True
+
+
+# =========================
+# HEALTH CHECK (Render)
+# =========================
+async def handle_health(request: web.Request) -> web.Response:
+    return web.Response(text="ok")
+
+
+async def start_web_server() -> None:
+    app = web.Application()
+    app.router.add_get("/", handle_health)
+    app.router.add_get("/health", handle_health)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+
+
+async def send_startup_notification() -> None:
+    try:
+        me = await bot.get_me()
+        msg = (
+            "✅ БОТ ЗАПУЩЕН\n\n"
+            f"🕒 Время: {_now_str()}\n"
+            f"🤖 Bot: @{me.username}\n"
+            f"📌 Канал проверки подписки: {CHANNEL_ID}\n"
+            f"🌐 Health: 0.0.0.0:{PORT}/health\n"
+        )
+        await bot.send_message(chat_id=ADMIN_ID, text=msg)
+    except Exception:
+        print("Startup notification failed")
+        print(traceback.format_exc())
+
+
+# =========================
+# MAIN
+# =========================
+async def main() -> None:
+    await start_web_server()
+    await send_startup_notification()
+
+    try:
+        await dp.start_polling(bot)
+    except Exception:
+        await send_admin_alert(
+            "bot_crash",
+            "Бот полностью остановлен (start_polling crashed).",
+            traceback.format_exc(),
         )
         raise
 
+
 if __name__ == "__main__":
-    # Проверяем обязательные переменные
-    if not TOKEN:
-        print("❌ Ошибка: BOT_TOKEN не установлен!")
-        exit(1)
-    
-    if not CEREBRAS_API_KEY:
-        print("⚠️ Внимание: AI_API_KEY не установлен! AI функции будут недоступны.")
-    
     asyncio.run(main())
