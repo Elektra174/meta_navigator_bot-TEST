@@ -8,7 +8,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder, ReplyKeyboardRemove
+from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from cerebras.cloud.sdk import AsyncCerebras
 from aiohttp import web
 
@@ -150,7 +150,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
     try:
         # Убираем старую клавиатуру если была
-        await message.answer("🔄", reply_markup=ReplyKeyboardRemove())
+        await message.answer("🔄", reply_markup=types.ReplyKeyboardRemove())
         
         if not await is_subscribed(message.from_user.id):
             # Пользователь не подписан - показываем первое касание
