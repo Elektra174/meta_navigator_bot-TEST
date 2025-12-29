@@ -19,8 +19,8 @@ CHANNEL_ID = "@metaformula_life"
 ADMIN_ID = 7830322013  # ID Александра для отчетов
 
 # Ресурсы проекта
-LOGO_START_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/logo.png.png"
-LOGO_AUDIT_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/logo11.png"
+LOGO_FORMULA_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/logo.png.png"  # Для Метаформулы Жизни
+LOGO_NAVIGATOR_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/logo11.png"  # Для Мета-Навигатора
 GUIDE_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/guide.pdf"
 MASTERCLASS_URL = "https://youtube.com/playlist?list=PLyour_playlist_id"  # Замените на реальную ссылку
 CHANNEL_URL = "https://t.me/metaformula_life"
@@ -73,16 +73,18 @@ QUESTIONS = [
 WELCOME_MESSAGES = {
     "not_subscribed": {
         "title": "Добро пожаловать в «Метаформулу Жизни»",
-        "text": "Меня зовут Александр Лазаренко.\n\n"
-                "Я — автор проекта. Я создал Мета-навигатор, чтобы помочь Вам увидеть программы Вашего Автопилота и проложить маршрут к себе настоящему.\n\n"
-                "Чтобы начать, пожалуйста, подпишитесь на наш канал:"
+        "text": "Меня зовут Александр Лазаренко. Я — автор проекта.\n\n"
+                "Я создал Мета-навигатор, чтобы помочь Вам увидеть программы Вашего Автопилота и проложить маршрут к себе настоящему.\n\n"
+                "Чтобы начать, пожалуйста, подпишитесь на наш канал:",
+        "logo": LOGO_FORMULA_URL  # logo.png.png для Метаформулы Жизни
     },
     "subscribed": {
         "title": "👋 Добро пожаловать в Мета-Навигатор!",
         "text": "Я Ваш проводник в мета-исследовании себя.\n\n"
                 "Помогу обнаружить скрытые программы «Автопилота», которые блокируют вашу энергию.\n\n"
-                "Мы пройдем 7 шагов, чтобы найти вашу личную **Метаформулу**.\n\n"
-                "Готовы начать?"
+                "Мы пройдем 7 шагов, чтобы найти вашу личную Метаформулу.\n\n"
+                "Готовы начать?",
+        "logo": LOGO_NAVIGATOR_URL  # logo11.png для Мета-Навигатора
     }
 }
 
@@ -184,7 +186,7 @@ async def send_admin_copy(user: types.User, answers: list, report: str):
     except Exception as e:
         logger.error(f"Admin log error: {e}")
 
-# --- ОБНОВЛЕННЫЕ ОБРАБОТЧИКИ С РАЗНЫМИ ПРИВЕТСТВИЯМИ ---
+# --- ОБНОВЛЕННЫЕ ОБРАБОТЧИКИ С РАЗНЫМИ ПРИВЕТСТВИЯМИ И КАРТИНКАМИ ---
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
@@ -215,7 +217,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
             caption = f"**{welcome['title']}**\n\n{welcome['text']}"
             
             await message.answer_photo(
-                photo=LOGO_START_URL,
+                photo=welcome["logo"],  # logo.png.png для Метаформулы Жизни
                 caption=caption,
                 reply_markup=builder.as_markup(),
                 parse_mode="Markdown"
@@ -235,7 +237,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
             caption = f"**{welcome['title']}**\n\n{welcome['text']}"
             
             await message.answer_photo(
-                photo=LOGO_START_URL,
+                photo=welcome["logo"],  # logo11.png для Мета-Навигатора
                 caption=caption,
                 reply_markup=builder.as_markup(),
                 parse_mode="Markdown"
@@ -266,8 +268,13 @@ async def handle_sub_check(callback: types.CallbackQuery, state: FSMContext):
             
             caption = f"**{welcome['title']}**\n\n{welcome['text']}"
             
-            await callback.message.edit_caption(
-                caption=caption,
+            # Редактируем сообщение с новой картинкой Мета-Навигатора
+            await callback.message.edit_media(
+                media=types.InputMediaPhoto(
+                    media=welcome["logo"],  # logo11.png для Мета-Навигатора
+                    caption=caption,
+                    parse_mode="Markdown"
+                ),
                 reply_markup=builder.as_markup()
             )
         else:
@@ -296,14 +303,10 @@ async def start_audit_flow(callback: types.CallbackQuery, state: FSMContext):
         
         await state.update_data(current_step=0, answers=[])
         
-        # Второе касание с лого
-        await callback.message.answer_photo(
-            photo=LOGO_AUDIT_URL,
-            caption=(
-                "🔬 **Мета-Персональная Терапия: Аудит Дефолт-Системы**\n\n"
-                "Мы пройдем 7 шагов для диагностики автоматических программ вашего мозга (DMN).\n\n"
-                "Отвечайте искренне — каждый ответ формирует нейронную карту вашего состояния."
-            ),
+        # Второе касание БЕЗ КАРТИНКИ (как вы указали)
+        await callback.message.answer(
+            "🔬 **Аудит Автопилота**\n\n"
+            "Отвечайте искренне — каждый ответ формирует нейронную карту вашего состояния.",
             parse_mode="Markdown"
         )
         
