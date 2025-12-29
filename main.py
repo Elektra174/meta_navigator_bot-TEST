@@ -251,10 +251,17 @@ async def cmd_start(message: types.Message, state: FSMContext):
 @dp.callback_query(F.data == "check_sub")
 async def handle_sub_check(callback: types.CallbackQuery, state: FSMContext):
     """Проверка подписки после нажатия кнопки"""
-    await callback.answer()
+    # Убираем "часики" сразу
+    await callback.answer("Проверяю подписку...")
     
     try:
-        if await is_subscribed(callback.from_user.id):
+        # Добавляем небольшую задержку для надежности
+        await asyncio.sleep(0.5)
+        
+        # Проверяем подписку
+        is_sub = await is_subscribed(callback.from_user.id)
+        
+        if is_sub:
             # Пользователь подписался - показываем приветствие от Мета-Навигатора
             welcome = WELCOME_MESSAGES["subscribed"]
             
@@ -268,29 +275,120 @@ async def handle_sub_check(callback: types.CallbackQuery, state: FSMContext):
             
             caption = f"**{welcome['title']}**\n\n{welcome['text']}"
             
-            # Редактируем сообщение с новой картинкой Мета-Навигатора
-            await callback.message.edit_media(
-                media=types.InputMediaPhoto(
-                    media=welcome["logo"],  # logo11.png для Мета-Навигатора
+            try:
+                # Редактируем сообщение с новой картинкой Мета-Навигатора
+                await callback.message.edit_media(
+                    media=types.InputMediaPhoto(
+                        media=welcome["logo"],  # logo11.png для Мета-Навигатора
+                        caption=caption,
+                        parse_mode="Markdown"
+                    ),
+                    reply_markup=builder.as_markup()
+                )
+            except Exception as edit_error:
+                # Если не получилось отредактировать, отправляем новое сообщение
+                logger.warning(f"Не удалось отредактировать сообщение: {edit_error}")
+                await callback.message.answer_photo(
+                    photo=welcome["logo"],
                     caption=caption,
+                    reply_markup=builder.as_markup(),
                     parse_mode="Markdown"
-                ),
-                reply_markup=builder.as_markup()
-            )
+                )
         else:
-            # Пользователь все еще не подписан
-            await callback.answer(
-                "❌ Вы еще не подписаны на канал! Пожалуйста, подпишитесь сначала.", 
-                show_alert=True
-            )
+            # Пользователь все еще не подписан - показываем алерт с предложением подписаться
+            try:
+                # Создаем новое сообщение с кнопкой для подписки
+                builder = InlineKeyboardBuilder()
+                builder.row(
+                    types.InlineKeyboardButton(
+                        text="📢 Подписаться на канал", 
+                        url=CHANNEL_URL
+                    )
+                )
+                builder.row(
+                    types.InlineKeyboardButton(
+                        text="✅ Я уже подписался", 
+                        callback_data="check_sub_again"
+                    )
+                )
+                
+                alert_message = (
+                    "❌ **Вы еще не подписаны на канал!**\n\n"
+                    "Для доступа к диагностике необходимо подписаться на наш канал.\n\n"
+                    "После подписки нажмите кнопку «✅ Я уже подписался»"
+                )
+                
+                # Отправляем отдельное сообщение с алертом
+                await callback.message.answer(
+                    alert_message,
+                    reply_markup=builder.as_markup(),
+                    parse_mode="Markdown"
+                )
+                
+                # Также показываем всплывающее уведомление
+                await callback.answer(
+                    "Вы еще не подписаны на канал! Пожалуйста, подпишитесь.", 
+                    show_alert=True
+                )
+                
+            except Exception as alert_error:
+                logger.error(f"Ошибка отправки алерта: {alert_error}")
+                await callback.answer("❌ Вы не подписаны на канал!", show_alert=True)
+                
     except Exception as e:
         logger.error(f"Ошибка проверки подписки: {e}")
         await callback.answer("Произошла ошибка при проверке подписки", show_alert=True)
 
+@dp.callback_query(F.data == "check_sub_again")
+async def handle_sub_check_again(callback: types.CallbackQuery):
+    """Повторная проверка подписки"""
+    await callback.answer("Проверяю еще раз...")
+    
+    try:
+        # Проверяем подписку
+        is_sub = await is_subscribed(callback.from_user.id)
+        
+        if is_sub:
+            # Пользователь теперь подписан
+            welcome = WELCOME_MESSAGES["subscribed"]
+            
+            builder = InlineKeyboardBuilder()
+            builder.row(
+                types.InlineKeyboardButton(
+                    text="🚀 Начать Диагностику", 
+                    callback_data="start_audit"
+                )
+            )
+            
+            caption = f"**{welcome['title']}**\n\n{welcome['text']}"
+            
+            # Удаляем предыдущее сообщение с алертом
+            try:
+                await callback.message.delete()
+            except:
+                pass
+                
+            # Отправляем новое сообщение
+            await callback.message.answer_photo(
+                photo=welcome["logo"],
+                caption=caption,
+                reply_markup=builder.as_markup(),
+                parse_mode="Markdown"
+            )
+        else:
+            await callback.answer(
+                "❌ Вы все еще не подписаны! Пожалуйста, подпишитесь на канал.", 
+                show_alert=True
+            )
+            
+    except Exception as e:
+        logger.error(f"Ошибка повторной проверки подписки: {e}")
+        await callback.answer("Ошибка проверки", show_alert=True)
+
 @dp.callback_query(F.data == "start_audit")
 async def start_audit_flow(callback: types.CallbackQuery, state: FSMContext):
     """Начало опроса (после подтверждения подписки)"""
-    await callback.answer()
+    await callback.answer("Запускаю диагностику...")
     
     try:
         # Дополнительная проверка подписки перед началом аудита
