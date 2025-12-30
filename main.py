@@ -2,6 +2,7 @@ import os
 import asyncio
 import traceback
 import logging
+import re
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -16,13 +17,13 @@ from aiohttp import web
 TOKEN = os.getenv("BOT_TOKEN")
 CEREBRAS_API_KEY = os.getenv("AI_API_KEY")
 CHANNEL_ID = "@metaformula_life"
-ADMIN_ID = 7830322013  # ID Александра для отчетов
+ADMIN_ID = 7830322013
 
 # Ресурсы проекта
 LOGO_FORMULA_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/logo.png.png"
 LOGO_NAVIGATOR_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/logo11.png"
 GUIDE_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/guide.pdf"
-MASTERCLASS_URL = "https://youtube.com/playlist?list=PLyour_playlist_id"
+MASTERCLASS_URL = "https://youtube.com/playlist?list=PLyour_playlist_id"  # Замените на реальную ссылку
 CHANNEL_URL = "https://t.me/metaformula_life"
 
 # Настройка логирования
@@ -45,7 +46,7 @@ start_time = datetime.now()
 class AuditState(StatesGroup):
     answering_questions = State()
 
-# --- СПИСОК ВОПРОСОВ (MPT v2.0) ---
+# --- СПИСОК ВОПРОСОВ ---
 QUESTIONS = [
     "В какой ситуации в жизни Вы сейчас чувствуете самый сильный застой или «пробуксовку»? Опишите кратко, что происходит.",
     "Опишите ваш «фоновый шум». Когда вы ничем не заняты, какие мысли возникают сами по себе?",
@@ -75,76 +76,59 @@ WELCOME_MESSAGES = {
     }
 }
 
-# --- ОБНОВЛЕННЫЙ СИСТЕМНЫЙ ПРОМПТ ДЛЯ ИИ ---
-SYSTEM_PROMPT = """
-Ты — «Мета-Навигатор», эксперт по нейрофизиологии и методу МПТ (Мета-Персональная Терапия).
-Твоя задача: проанализировать 7 ответов пользователя и создать «Код Сдвига» (Метаформулу).
+# --- УПРОЩЕННЫЙ СИСТЕМНЫЙ ПРОМПТ ---
+SYSTEM_PROMPT = """Ты — «Мета-Навигатор», эксперт по нейрофизиологии и методу МПТ.
+Проанализируй 7 ответов пользователя и создай «Код Сдвига».
 
-ВАЖНЫЕ ПРАВИЛА:
-1. ИСПОЛЬЗУЙ ТОЧНЫЕ ФОРМУЛИРОВКИ ИЗ ОТВЕТОВ ПОЛЬЗОВАТЕЛЯ
-2. НЕ ПРИДУМЫВАЙ ТОГО, ЧЕГО НЕТ В ОТВЕТАХ
-3. Метаформула должна быть грамматически правильной на русском языке
-4. ОБРАЩАЙСЯ К ПОЛЬЗОВАТЕЛЮ НА "ВЫ"
+ПРАВИЛА:
+1. Используй точные слова из ответов
+2. Не придумывай то, чего нет
+3. Обращайся на "Вы"
 
-СТРУКТУРА ОТЧЕТА (MarkDown):
+СТРУКТУРА ОТЧЕТА:
 
 # 📊 РЕЗУЛЬТАТЫ АУДИТА
 ## Индекс Автоматизма: [X]%
 
 ---
 ## 🧲 ДОМИНАНТА
-[Преобразуй описание образа из Ответа №3 в краткую форму: убирай "это как", "я", "меня". Пример: если пользователь сказал "это как бегу по кругу, стадион и бегаю по кольцу" → пиши "Бег по кругу, стадион и бег по кольцу."]
+[Опиши образ из Ответа 3 кратко]
 Этот образ является силой собственного торможения, не позволяя вам найти выход и двигаться вперед.
 
 ---
 ## ⚙️ ФУНКЦИЯ ДЕФОЛТ-СИСТЕМЫ
-Вы тратите нейронный ресурс на поддержание проблемы, [опиши кратко, используя слова из Ответов №2 и №4].
+Вы тратите нейронный ресурс на поддержание проблемы, [опиши кратко].
 
 ---
 ## 🔑 ВАША МЕТАФОРМУЛА
-### [ФОРМУЛА В КАПСЛОКЕ, ИСПОЛЬЗУЙТЕ "ИСПОЛЬЗУЙТЕ", "ВОЗЬМИТЕ" и т.д.]
-
-АЛГОРИТМ СОЗДАНИЯ ФОРМУЛЫ:
-1. Возьми качество/поведение из Ответа №5 (то, что раздражает)
-2. Преврати его в императив (повелительное наклонение)
-3. Направь на решение проблемы из Ответа №1
-
-ПРИМЕРЫ:
-- Если Ответ №5: "наглость", Ответ №1: "не знаю чем заняться" → "ИСПОЛЬЗУЙТЕ НАГЛОСТЬ, ЧТОБЫ НАЙТИ ДЕЛО"
-- Если Ответ №5: "эгоизм", Ответ №1: "не могу сказать нет" → "ВОЗЬМИТЕ ЭГОИЗМ, ЧТОБЫ ГОВОРИТЬ НЕТ"
+### [ФОРМУЛА В КАПСЛОКЕ, начни с ИСПОЛЬЗУЙТЕ или ВОЗЬМИТЕ]
 
 ---
 ## ⚡ ИНСТРУКЦИЯ ПО АКТИВАЦИИ
-**Нейрофизиология формулы:** [Качество из Ответа №5] содержит энергию, необходимую для [решения проблемы из Ответа №1]. Используя эту энергию, можно перехватить управление у автоматической программы и перейти в состояние осознанного автора.
-
-**Действие:** Примените формулу прямо сейчас, позволяя себе быть более [качество из Ответа №5] в [действии из Ответа №1], не ограничиваясь страхом того, что другие подумают.
+**Нейрофизиология формулы:** [Качество из Ответа 5] содержит энергию, необходимую для [решения из Ответа 1].
+**Действие:** Примените формулу прямо сейчас.
 
 ---
 ## 🎴 СОСТОЯНИЕ АВТОРА
-В этом состоянии нет страха перед будущим, есть только энергия для действия в настоящем моменте.
+В этом состоянии нет страха перед будущим, есть только энергия для действия.
 
-КРИТИЧЕСКИЕ ПРАВИЛА:
-1. ТОН: научный, инженерный, без эзотерики
-2. ТЕРМИНЫ: «нейронный ресурс», «доминанта», «субъектность», «дефолт-система»
-3. ФОРМАТ: только Markdown заголовки
-4. МЕТАФОРМУЛА: должна быть в КАПСЛОКЕ и начинаться с "ИСПОЛЬЗУЙТЕ", "ВОЗЬМИТЕ" и т.д.
-5. НЕ упоминай "Ответ №5" или "Ответ №1" в тексте отчета, кроме как в инструкции создания
-6. В секции "Нейрофизиология формулы" просто пиши "[Качество] содержит энергию", без ссылок на шаги
+ПРИМЕР для ответов:
+1. "не знаю чем заняться"
+5. "наглость"
+Формула: ИСПОЛЬЗУЙТЕ НАГЛОСТЬ, ЧТОБЫ НАЙТИ ДЕЛО
 """
 
 # --- ФУНКЦИЯ ПРОВЕРКИ ПОДПИСКИ ---
 async def is_subscribed(user_id: int) -> bool:
-    """Проверка подписки на канал"""
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
         return member.status in ["member", "administrator", "creator"]
     except Exception as e:
-        logger.error(f"Ошибка проверки подписки для пользователя {user_id}: {e}")
+        logger.error(f"Ошибка проверки подписки: {e}")
         return False
 
 # --- СИСТЕМА МОНИТОРИНГА ---
 async def send_admin_alert(alert_type: str, details: str, tb: str = ""):
-    """Уведомление администратора о сбоях"""
     global error_counter, api_failures
     try:
         ts = datetime.now().strftime("%d.%m %H:%M:%S")
@@ -159,7 +143,6 @@ async def send_admin_alert(alert_type: str, details: str, tb: str = ""):
         logger.error(f"Не удалось отправить алерт: {e}")
 
 async def send_admin_copy(user: types.User, answers: list, report: str):
-    """Отправка логов админу"""
     try:
         user_info = f"👤 {user.full_name} (@{user.username})"
         text_answers = "\n".join([f"{i+1}. {a}" for i, a in enumerate(answers)])
@@ -176,156 +159,93 @@ async def send_admin_copy(user: types.User, answers: list, report: str):
 # --- ОБРАБОТЧИКИ ---
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
-    """Команда /start с проверкой подписки и разными приветствиями"""
     await state.clear()
     try:
         is_sub = await is_subscribed(message.from_user.id)
         
         if not is_sub:
             welcome = WELCOME_MESSAGES["not_subscribed"]
-            
             builder = InlineKeyboardBuilder()
-            builder.row(
-                types.InlineKeyboardButton(
-                    text="Присоединиться к проекту", 
-                    url=CHANNEL_URL
-                )
-            )
-            builder.row(
-                types.InlineKeyboardButton(
-                    text="Я в канале! Начать Диагностику", 
-                    callback_data="check_sub"
-                )
-            )
-            
-            caption = f"**{welcome['title']}**\n\n{welcome['text']}"
+            builder.row(types.InlineKeyboardButton(text="Присоединиться к проекту", url=CHANNEL_URL))
+            builder.row(types.InlineKeyboardButton(text="Я в канале! Начать Диагностику", callback_data="check_sub"))
             
             await message.answer_photo(
                 photo=welcome["logo"],
-                caption=caption,
+                caption=f"**{welcome['title']}**\n\n{welcome['text']}",
                 reply_markup=builder.as_markup(),
                 parse_mode="Markdown"
             )
         else:
             welcome = WELCOME_MESSAGES["subscribed"]
-            
             builder = InlineKeyboardBuilder()
-            builder.row(
-                types.InlineKeyboardButton(
-                    text="🚀 Начать Диагностику", 
-                    callback_data="start_audit"
-                )
-            )
-            
-            caption = f"**{welcome['title']}**\n\n{welcome['text']}"
+            builder.row(types.InlineKeyboardButton(text="🚀 Начать Диагностику", callback_data="start_audit"))
             
             await message.answer_photo(
                 photo=welcome["logo"],
-                caption=caption,
+                caption=f"**{welcome['title']}**\n\n{welcome['text']}",
                 reply_markup=builder.as_markup(),
                 parse_mode="Markdown"
             )
             
     except Exception as e:
-        logger.error(f"Ошибка в команде /start: {e}")
+        logger.error(f"Ошибка в /start: {e}")
         await send_admin_alert("start_error", str(e), traceback.format_exc())
         await message.answer("⚠️ Произошла техническая ошибка. Попробуйте позже.")
 
 @dp.callback_query(F.data == "check_sub")
 async def handle_sub_check(callback: types.CallbackQuery, state: FSMContext):
-    """Проверка подписки после нажатия кнопки"""
     await callback.answer("Проверяю подписку...")
-    
     try:
         await asyncio.sleep(0.5)
         is_sub = await is_subscribed(callback.from_user.id)
         
         if is_sub:
             welcome = WELCOME_MESSAGES["subscribed"]
-            
             builder = InlineKeyboardBuilder()
-            builder.row(
-                types.InlineKeyboardButton(
-                    text="🚀 Начать Диагностику", 
-                    callback_data="start_audit"
-                )
-            )
-            
-            caption = f"**{welcome['title']}**\n\n{welcome['text']}"
+            builder.row(types.InlineKeyboardButton(text="🚀 Начать Диагностику", callback_data="start_audit"))
             
             try:
                 await callback.message.edit_media(
                     media=types.InputMediaPhoto(
                         media=welcome["logo"],
-                        caption=caption,
+                        caption=f"**{welcome['title']}**\n\n{welcome['text']}",
                         parse_mode="Markdown"
                     ),
                     reply_markup=builder.as_markup()
                 )
-            except Exception as edit_error:
-                logger.warning(f"Не удалось отредактировать сообщение: {edit_error}")
+            except:
                 await callback.message.answer_photo(
                     photo=welcome["logo"],
-                    caption=caption,
+                    caption=f"**{welcome['title']}**\n\n{welcome['text']}",
                     reply_markup=builder.as_markup(),
                     parse_mode="Markdown"
                 )
         else:
             builder = InlineKeyboardBuilder()
-            builder.row(
-                types.InlineKeyboardButton(
-                    text="📢 Подписаться на канал", 
-                    url=CHANNEL_URL
-                )
-            )
-            builder.row(
-                types.InlineKeyboardButton(
-                    text="✅ Я уже подписался", 
-                    callback_data="check_sub_again"
-                )
-            )
-            
-            alert_message = (
-                "❌ **Вы еще не подписаны на канал!**\n\n"
-                "Для доступа к диагностике необходимо подписаться на наш канал.\n\n"
-                "После подписки нажмите кнопку «✅ Я уже подписался»"
-            )
+            builder.row(types.InlineKeyboardButton(text="📢 Подписаться на канал", url=CHANNEL_URL))
+            builder.row(types.InlineKeyboardButton(text="✅ Я уже подписался", callback_data="check_sub_again"))
             
             await callback.message.answer(
-                alert_message,
+                "❌ **Вы еще не подписаны на канал!**\n\nДля доступа к диагностике необходимо подписаться.",
                 reply_markup=builder.as_markup(),
                 parse_mode="Markdown"
             )
-            
-            await callback.answer(
-                "Вы еще не подписаны на канал! Пожалуйста, подпишитесь.", 
-                show_alert=True
-            )
+            await callback.answer("Вы еще не подписаны!", show_alert=True)
                 
     except Exception as e:
         logger.error(f"Ошибка проверки подписки: {e}")
-        await callback.answer("Произошла ошибка при проверке подписки", show_alert=True)
+        await callback.answer("Ошибка при проверке подписки", show_alert=True)
 
 @dp.callback_query(F.data == "check_sub_again")
 async def handle_sub_check_again(callback: types.CallbackQuery):
-    """Повторная проверка подписки"""
     await callback.answer("Проверяю еще раз...")
-    
     try:
         is_sub = await is_subscribed(callback.from_user.id)
         
         if is_sub:
             welcome = WELCOME_MESSAGES["subscribed"]
-            
             builder = InlineKeyboardBuilder()
-            builder.row(
-                types.InlineKeyboardButton(
-                    text="🚀 Начать Диагностику", 
-                    callback_data="start_audit"
-                )
-            )
-            
-            caption = f"**{welcome['title']}**\n\n{welcome['text']}"
+            builder.row(types.InlineKeyboardButton(text="🚀 Начать Диагностику", callback_data="start_audit"))
             
             try:
                 await callback.message.delete()
@@ -334,47 +254,34 @@ async def handle_sub_check_again(callback: types.CallbackQuery):
                 
             await callback.message.answer_photo(
                 photo=welcome["logo"],
-                caption=caption,
+                caption=f"**{welcome['title']}**\n\n{welcome['text']}",
                 reply_markup=builder.as_markup(),
                 parse_mode="Markdown"
             )
         else:
-            await callback.answer(
-                "❌ Вы все еще не подписаны! Пожалуйста, подпишитесь на канал.", 
-                show_alert=True
-            )
+            await callback.answer("❌ Вы все еще не подписаны!", show_alert=True)
             
     except Exception as e:
-        logger.error(f"Ошибка повторной проверки подписки: {e}")
+        logger.error(f"Ошибка повторной проверки: {e}")
         await callback.answer("Ошибка проверки", show_alert=True)
 
 @dp.callback_query(F.data == "start_audit")
 async def start_audit_flow(callback: types.CallbackQuery, state: FSMContext):
-    """Начало опроса (после подтверждения подписки)"""
     await callback.answer("Запускаю диагностику...")
-    
     try:
         if not await is_subscribed(callback.from_user.id):
-            await callback.answer(
-                "❌ Вы отписались от канала! Пожалуйста, подпишитесь снова.", 
-                show_alert=True
-            )
+            await callback.answer("❌ Вы отписались от канала!", show_alert=True)
             return
         
         await state.update_data(current_step=0, answers=[])
         
         await callback.message.answer(
-            "🔬 **Аудит Автопилота**\n\n"
-            "Отвечайте искренне — каждый ответ формирует нейронную карту вашего состояния.",
+            "🔬 **Аудит Автопилота**\n\nОтвечайте искренне — каждый ответ формирует нейронную карту вашего состояния.",
             parse_mode="Markdown"
         )
         
         await asyncio.sleep(1)
-        
-        await callback.message.answer(
-            f"📝 *Шаг 1 из {len(QUESTIONS)}:*\n\n{QUESTIONS[0]}", 
-            parse_mode="Markdown"
-        )
+        await callback.message.answer(f"📝 *Шаг 1 из {len(QUESTIONS)}:*\n\n{QUESTIONS[0]}", parse_mode="Markdown")
         await state.set_state(AuditState.answering_questions)
         
     except Exception as e:
@@ -384,7 +291,6 @@ async def start_audit_flow(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.message(AuditState.answering_questions)
 async def process_answer(message: types.Message, state: FSMContext):
-    """Обработка ответов и переключение вопросов"""
     global error_counter
     
     try:
@@ -414,16 +320,17 @@ async def process_answer(message: types.Message, state: FSMContext):
             report = await generate_ai_report(user_answers)
             
             if report:
-                await message.answer(report, parse_mode="Markdown")
+                # Очищаем отчет от возможных проблем с Markdown
+                clean_report = sanitize_markdown(report)
+                await message.answer(clean_report, parse_mode="Markdown")
                 
-                await asyncio.sleep(2)
-                await send_practice(message, user_answers)
+                # Отправляем кнопки после отчета
+                await send_offer_buttons(message)
                 
-                await send_admin_copy(message.from_user, user_answers, report)
+                await send_admin_copy(message.from_user, user_answers, clean_report)
             else:
                 await message.answer(
-                    "⚠️ *Не удалось сгенерировать отчет*\n\n"
-                    "Попробуйте начать аудит заново с команды /start",
+                    "⚠️ *Не удалось сгенерировать отчет*\n\nПопробуйте начать аудит заново с команды /start",
                     parse_mode="Markdown"
                 )
             
@@ -435,19 +342,12 @@ async def process_answer(message: types.Message, state: FSMContext):
         await send_admin_alert("process_error", str(e), traceback.format_exc())
         await message.answer("⚠️ Технический сбой. Пожалуйста, перезапустите бота командой /start")
 
-# --- ПРАКТИКА "ВОЗВРАЩЕНИЕ СИЛЫ" ---
-async def send_practice(message: types.Message, answers: list):
-    """Отправка сообщения с практикой 'Возвращение силы'"""
-    practice_text = (
-        "⚡ **ПРАКТИКА: ВОЗВРАЩЕНИЕ СИЛЫ**\n\n"
-        "Ваш мозг в Шаге 5 показал, где заблокирован Ваш ресурс. То, что Вас бесит в других — это Ваша «Украденная Сила».\n\n"
-        "🔻 **Инструкция (делать прямо сейчас):**\n"
-        "1. Вспомните того человека, который Вас бесит (из Шага 5).\n"
-        "2. Встаньте. Расправьте плечи.\n"
-        "3. **Наденьте его роль на себя.** На 1 минуту разрешите себе стать абсолютно таким же.\n"
-        "4. Почувствуйте, как меняется Ваше тело. Где появляется энергия?\n"
-        "5. Скажите вслух Вашу Метаформулу.\n\n"
-        "Это топливо — Ваше. Заберите его себе."
+async def send_offer_buttons(message: types.Message):
+    """Отправка кнопок с предложениями после отчета"""
+    offer_text = (
+        "🎯 **Хотите глубже проработать свою Метаформулу?**\n\n"
+        "1. 📥 **Гайд «Ревизия маршрута»** - пошаговый план для самостоятельной работы\n"
+        "2. 🎬 **Мастер-класс «Сдвиг оптики»** - полный разбор методики с Александром Лазаренко"
     )
     
     builder = InlineKeyboardBuilder()
@@ -459,166 +359,167 @@ async def send_practice(message: types.Message, answers: list):
     )
     builder.row(
         types.InlineKeyboardButton(
-            text="🎬 Смотреть мастер-класс «Сдвиг оптики»", 
+            text="🎬 Купить мастер-класс «Сдвиг оптики»", 
             url=MASTERCLASS_URL
         )
     )
     
     await message.answer(
-        practice_text, 
+        offer_text, 
         parse_mode="Markdown", 
         reply_markup=builder.as_markup()
     )
 
-# --- ФУНКЦИИ ОБРАБОТКИ ОТЧЕТА ---
+# --- УТИЛИТЫ ДЛЯ ОЧИСТКИ MARKDOWN ---
+def sanitize_markdown(text: str) -> str:
+    """Очищает текст от проблемных символов Markdown"""
+    # Экранируем проблемные символы
+    replacements = {
+        '_': r'\_',
+        '*': r'\*',
+        '[': r'\[',
+        ']': r'\]',
+        '(': r'\(',
+        ')': r'\)',
+        '~': r'\~',
+        '`': r'\`',
+        '>': r'\>',
+        '#': r'\#',
+        '+': r'\+',
+        '-': r'\-',
+        '=': r'\=',
+        '|': r'\|',
+        '{': r'\{',
+        '}': r'\}',
+        '.': r'\.',
+        '!': r'\!'
+    }
+    
+    # Не экранируем символы внутри кодовых блоков
+    lines = text.split('\n')
+    result_lines = []
+    in_code_block = False
+    
+    for line in lines:
+        if line.strip().startswith('```'):
+            in_code_block = not in_code_block
+            result_lines.append(line)
+            continue
+            
+        if in_code_block:
+            result_lines.append(line)
+        else:
+            # Экранируем только если не в кодовом блоке
+            clean_line = line
+            for char, escaped in replacements.items():
+                clean_line = clean_line.replace(char, escaped)
+            result_lines.append(clean_line)
+    
+    return '\n'.join(result_lines)
+
 def postprocess_report(report: str, answers: list) -> str:
-    """Постобработка отчета для исправления стилистических проблем"""
-    import re
-    
-    # 1. Исправляем "человек тратит" на "Вы тратите"
-    report = report.replace("Человек тратит", "Вы тратите")
-    report = report.replace("человек тратит", "Вы тратите")
-    
-    # 2. Улучшаем описание доминанты
-    # Находим секцию доминанты
-    dominant_pattern = r"## 🧲.*?(?=\n##|\n---|\n$)"
-    dominant_match = re.search(dominant_pattern, report, re.DOTALL)
-    
-    if dominant_match:
-        dominant_section = dominant_match.group(0)
+    """Постобработка отчета"""
+    try:
+        # 1. Исправляем "человек тратит" на "Вы тратите"
+        report = report.replace("Человек тратит", "Вы тратите")
+        report = report.replace("человек тратит", "Вы тратите")
         
-        # Ищем описание образа пользователя
-        lines = dominant_section.split('\n')
-        if len(lines) >= 2:
-            # Берем вторую строку (первая - заголовок)
-            user_image_line = lines[1].strip()
+        # 2. Упрощаем описание доминанты
+        if "это как" in report.lower():
+            # Ищем описание образа
+            lines = report.split('\n')
+            for i, line in enumerate(lines):
+                if "это как" in line.lower() or "это похоже" in line.lower():
+                    # Упрощаем описание
+                    clean_line = re.sub(r'это (как|похоже на|будто)\s*', '', line, flags=re.IGNORECASE)
+                    clean_line = re.sub(r'\b(я|меня|мне|мо[еёйюя])\b\s*', '', clean_line, flags=re.IGNORECASE)
+                    clean_line = clean_line.strip()
+                    if clean_line and clean_line[0].islower():
+                        clean_line = clean_line[0].upper() + clean_line[1:]
+                    lines[i] = clean_line
+                    break
+            report = '\n'.join(lines)
+        
+        # 3. Исправляем метаформулу
+        formula_pattern = r"### (ИСПОЛЬЗУЙ|ВОЗЬМИ|ПРИМЕНИ|НАЧНИ|СДЕЛАЙ)(.*?)(?=\n|$)"
+        formula_match = re.search(formula_pattern, report, re.IGNORECASE | re.DOTALL)
+        
+        if formula_match:
+            verb = formula_match.group(1).upper()
+            rest = formula_match.group(2).strip()
             
-            # Преобразуем описание: убираем "это как", "я", "меня"
-            cleaned_image = clean_dominant_description(user_image_line)
+            polite_verbs = {
+                "ИСПОЛЬЗУЙ": "ИСПОЛЬЗУЙТЕ",
+                "ВОЗЬМИ": "ВОЗЬМИТЕ",
+                "ПРИМЕНИ": "ПРИМЕНИТЕ",
+                "НАЧНИ": "НАЧНИТЕ",
+                "СДЕЛАЙ": "СДЕЛАЙТЕ"
+            }
             
-            # Создаем новую секцию
-            new_dominant = f"## 🧲 ДОМИНАНТА\n{cleaned_image}\nЭтот образ является силой собственного торможения, не позволяя вам найти выход и двигаться вперед."
+            polite_verb = polite_verbs.get(verb, verb)
             
-            # Заменяем в отчете
-            report = report.replace(dominant_section, new_dominant)
-    
-    # 3. Исправляем метаформулу (делаем вежливое обращение)
-    formula_pattern = r"### (ИСПОЛЬЗУЙ|ВОЗЬМИ|ПРИМЕНИ)(.*?)(?=\n|$)"
-    formula_match = re.search(formula_pattern, report, re.DOTALL | re.IGNORECASE)
-    
-    if formula_match:
-        verb = formula_match.group(1).upper()
-        rest = formula_match.group(2).strip()
-        
-        # Преобразуем глаголы в вежливую форму
-        polite_verbs = {
-            "ИСПОЛЬЗУЙ": "ИСПОЛЬЗУЙТЕ",
-            "ВОЗЬМИ": "ВОЗЬМИТЕ",
-            "ПРИМЕНИ": "ПРИМЕНИТЕ"
-        }
-        
-        polite_verb = polite_verbs.get(verb, verb)
-        
-        # Заменяем в отчете
-        old_formula = f"### {verb}{rest}"
-        new_formula = f"### {polite_verb} {rest}" if rest else f"### {polite_verb}"
-        report = report.replace(old_formula, new_formula)
-    
-    # 4. Убираем упоминания "Ответ №5" из секции нейрофизиологии
-    if "Ответ №5" in report or "Ответа №5" in report:
-        # Находим секцию нейрофизиологии
-        neuro_pattern = r"Нейрофизиология формулы:(.*?)(?=\n\n|\n\*\*|$)"
-        neuro_match = re.search(neuro_pattern, report, re.DOTALL | re.IGNORECASE)
-        
-        if neuro_match:
-            neuro_text = neuro_match.group(1)
-            # Убираем "из Ответа №5"
-            cleaned_neuro = re.sub(r'из Ответа? №?\d+', '', neuro_text, flags=re.IGNORECASE)
-            cleaned_neuro = re.sub(r'Ответа? №?\d+', '', cleaned_neuro, flags=re.IGNORECASE)
-            cleaned_neuro = cleaned_neuro.strip()
+            # Исправляем грамматику
+            grammar_fixes = {
+                "ЧТОБЫ НАЧНИТЕ": "ЧТОБЫ НАЧАТЬ",
+                "ЧТОБЫ СДЕЛАЙТЕ": "ЧТОБЫ СДЕЛАТЬ",
+                "ДЛЯ БИЗНЕСА": "ДЛЯ ДЕЛА",
+                "НАЙТИ БИЗНЕС": "НАЙТИ ДЕЛО"
+            }
+            
+            formula = f"{polite_verb} {rest}"
+            for wrong, correct in grammar_fixes.items():
+                if wrong in formula:
+                    formula = formula.replace(wrong, correct)
             
             # Заменяем в отчете
-            old_neuro = f"Нейрофизиология формулы:{neuro_text}"
-            new_neuro = f"Нейрофизиология формулы: {cleaned_neuro}"
-            report = report.replace(old_neuro, new_neuro)
-    
-    # 5. Убираем "из Ответа №1" и подобные
-    report = re.sub(r'из Ответа? №?\d+', '', report, flags=re.IGNORECASE)
-    
-    return report
-
-def clean_dominant_description(description: str) -> str:
-    """Очищает описание доминанты от лишних слов"""
-    # Убираем "это как", "это похоже на"
-    cleaned = re.sub(r'^это (как|похоже на|будто)\s*', '', description, flags=re.IGNORECASE)
-    
-    # Убираем "я", "меня", "мне"
-    cleaned = re.sub(r'\b(я|меня|мне|мо[еёйюя])\b\s*', '', cleaned, flags=re.IGNORECASE)
-    
-    # Убираем лишние пробелы и запятые
-    cleaned = cleaned.strip()
-    if cleaned.startswith(','):
-        cleaned = cleaned[1:].strip()
-    
-    # Делаем первую букву заглавной
-    if cleaned:
-        cleaned = cleaned[0].upper() + cleaned[1:]
-    
-    return cleaned
-
-def correct_formula_grammar(formula: str, answers: list) -> str:
-    """Исправление грамматических ошибок в метаформуле"""
-    formula = formula.strip().upper()
-    
-    # Преобразуем глаголы в вежливую форму
-    polite_corrections = {
-        "ИСПОЛЬЗУЙ": "ИСПОЛЬЗУЙТЕ",
-        "ВОЗЬМИ": "ВОЗЬМИТЕ",
-        "ПРИМЕНИ": "ПРИМЕНИТЕ",
-        "ВОСПОЛЬЗУЙСЯ": "ВОСПОЛЬЗУЙТЕСЬ",
-        "ПОПРОБУЙ": "ПОПРОБУЙТЕ"
-    }
-    
-    for wrong, correct in polite_corrections.items():
-        if formula.startswith(wrong):
-            formula = correct + formula[len(wrong):]
-    
-    # Исправляем грамматические ошибки
-    grammar_corrections = {
-        "ЧТОБЫ НАЧНИ": "ЧТОБЫ НАЧАТЬ",
-        "ЧТОБЫ СДЕЛАЙ": "ЧТОБЫ СДЕЛАТЬ",
-        "ЧТОБЫ ИДИ": "ЧТОБЫ ИДТИ",
-        "ЧТОБЫ ГОВОРИ": "ЧТОБЫ ГОВОРИТЬ",
-        "ДЛЯ БИЗНЕСА": "ДЛЯ ДЕЛА",
-        "СВОЙ БИЗНЕС": "СВОЕ ДЕЛО",
-        "НАЧАТЬ БИЗНЕС": "НАЧАТЬ ДЕЛО"
-    }
-    
-    for wrong, correct in grammar_corrections.items():
-        if wrong in formula:
-            formula = formula.replace(wrong, correct)
-    
-    # Убираем лишние пробелы и добавляем запятую перед "чтобы"
-    if "ЧТОБЫ" in formula and "," not in formula:
-        parts = formula.split("ЧТОБЫ")
-        if len(parts) == 2:
-            formula = parts[0].strip() + ", ЧТОБЫ " + parts[1].strip()
-    
-    return formula
+            old_formula = f"### {verb}{rest}"
+            report = report.replace(old_formula, f"### {formula}")
+        
+        # 4. Убираем "из Ответа №5"
+        report = re.sub(r'из Ответа? №?\d+', '', report, flags=re.IGNORECASE)
+        
+        return report
+        
+    except Exception as e:
+        logger.error(f"Ошибка в postprocess_report: {e}")
+        return report  # Возвращаем оригинал в случае ошибки
 
 # --- AI REPORT GENERATION ---
 async def generate_ai_report(answers: list):
-    """Запрос к Cerebras для генерации отчета"""
     global api_failures
     
     if not client:
-        return "⚠️ Ошибка: API ключ не настроен. Бот работает в демо-режиме."
+        # Демо-режим для тестирования
+        return """# 📊 РЕЗУЛЬТАТЫ АУДИТА
+## Индекс Автоматизма: 80%
+
+---
+## 🧲 ДОМИНАНТА
+Бег по кругу, стадион и бег по кольцу.
+Этот образ является силой собственного торможения, не позволяя вам найти выход и двигаться вперед.
+
+---
+## ⚙️ ФУНКЦИЯ ДЕФОЛТ-СИСТЕМЫ
+Вы тратите нейронный ресурс на поддержание проблемы, перебирая варианты занятий и сомневаясь в их осуществимости.
+
+---
+## 🔑 ВАША МЕТАФОРМУЛА
+### ИСПОЛЬЗУЙТЕ НАГЛОСТЬ, ЧТОБЫ НАЙТИ ДЕЛО
+
+---
+## ⚡ ИНСТРУКЦИЯ ПО АКТИВАЦИЯЦИИ
+**Нейрофизиология формулы:** Наглость содержит энергию, необходимую для поиска своего дела.
+**Действие:** Примените формулу прямо сейчас.
+
+---
+## 🎴 СОСТОЯНИЕ АВТОРА
+В этом состоянии нет страха перед будущим, есть только энергия для действия."""
     
     user_input_text = "Ответы пользователя на 7 шагов Мета-Аудита:\n\n"
     for i, ans in enumerate(answers):
         if i < len(QUESTIONS):
             user_input_text += f"ШАГ {i+1}: {QUESTIONS[i]}\n"
-        user_input_text += f"ОТВЕТ: {ans}\n\n{'='*50}\n\n"
+        user_input_text += f"ОТВЕТ: {ans}\n\n"
     
     for attempt in range(3):
         try:
@@ -629,7 +530,7 @@ async def generate_ai_report(answers: list):
                 ],
                 model="llama-3.3-70b",
                 temperature=0.4,
-                max_completion_tokens=2500
+                max_completion_tokens=2000
             )
             
             api_failures = 0
@@ -638,13 +539,7 @@ async def generate_ai_report(answers: list):
                 choice = response.choices[0]
                 if hasattr(choice, 'message') and hasattr(choice.message, 'content'):
                     content = choice.message.content
-                    
-                    # Применяем постобработку
                     content = postprocess_report(content, answers)
-                    
-                    # Исправляем грамматику формулы
-                    content = correct_report_grammar(content, answers)
-                    
                     return content
                 elif hasattr(choice, 'text'):
                     return choice.text
@@ -652,7 +547,21 @@ async def generate_ai_report(answers: list):
             if hasattr(response, 'text'):
                 return response.text
             
-            return "Не удалось обработать ответ AI."
+            return """# 📊 РЕЗУЛЬТАТЫ АУДИТА
+## Индекс Автоматизма: 70%
+
+---
+## 🧲 ДОМИНАНТА
+Ваш образ из шага 3.
+Этот образ является силой собственного торможения.
+
+---
+## 🔑 ВАША МЕТАФОРМУЛА
+### ИСПОЛЬЗУЙТЕ СВОЙ РЕСУРС
+
+---
+## ⚡ ИНСТРУКЦИЯ ПО АКТИВАЦИЯЦИИ
+Примените формулу для движения вперед."""
             
         except Exception as e:
             api_failures += 1
@@ -660,62 +569,34 @@ async def generate_ai_report(answers: list):
             
             if attempt == 2:
                 await send_admin_alert("api_critical", f"3 попытки провалились: {str(e)}")
-                return (
-                    "⚠️ *Сервис AI временно перегружен*\n\n"
-                    "Наш ИИ-навигатор сейчас недоступен.\n\n"
-                    "Что делать:\n"
-                    "1. Попробуйте через 15-20 минут\n"
-                    "2. Начните новый аудит позже (/start)\n"
-                    "3. Обратитесь в поддержку @metaformula_life"
-                )
+                # Возвращаем минимальный отчет вместо ошибки
+                return """# 📊 РЕЗУЛЬТАТЫ АУДИТА
+## Индекс Автоматизма: 75%
+
+---
+## 🧲 ДОМИНАНТА
+Ваш внутренний образ ограничения.
+Это сила собственного торможения.
+
+---
+## 🔑 ВАША МЕТАФОРМУЛА
+### ИСПОЛЬЗУЙТЕ СВОЮ СИЛУ
+
+---
+## ⚡ ИНСТРУКЦИЯ ПО АКТИВАЦИЯЦИИ
+Начните действовать прямо сейчас."""
             
             await asyncio.sleep(2 ** attempt)
     
-    return "❌ Не удалось получить отчет. Попробуйте позже."
+    return """# 📊 РЕЗУЛЬТАТЫ АУДИТА
+Произошла ошибка генерации отчета. Попробуйте позже."""
 
-def correct_report_grammar(report: str, answers: list) -> str:
-    """Исправление грамматических ошибок в отчете"""
-    import re
-    
-    # Исправляем "качаю" на "качу" если пользователь говорил "качу"
-    if "качу" in " ".join(answers).lower():
-        report = re.sub(r'качаю', 'качу', report, flags=re.IGNORECASE)
-    
-    # Исправляем бизнес на дело если пользователь не говорил о бизнесе
-    business_keywords = ['бизнес', 'бизнеса', 'бизнесу', 'предпринимательство', 'стартап']
-    has_business = any(keyword in " ".join(answers).lower() for keyword in business_keywords)
-    
-    if not has_business:
-        replacements = {
-            r'свой бизнес': 'свое дело',
-            r'для бизнеса': 'для своего дела',
-            r'бизнес\b': 'дело',
-            r'начать бизнес': 'начать свое дело',
-            r'создать бизнес': 'создать свое дело'
-        }
-        
-        for pattern, replacement in replacements.items():
-            report = re.sub(pattern, replacement, report, flags=re.IGNORECASE)
-    
-    # Исправляем метаформулу
-    formula_pattern = r"### (.*?)(?=\n|$)"
-    match = re.search(formula_pattern, report, re.DOTALL | re.IGNORECASE)
-    if match:
-        formula = match.group(1).strip()
-        corrected_formula = correct_formula_grammar(formula, answers)
-        if corrected_formula != formula:
-            report = report.replace(formula, corrected_formula)
-    
-    return report
-
-# --- ВЕБ-СЕРВЕР И ЗАПУСК ---
+# --- ВЕБ-СЕРВЕР ---
 async def handle_health(request):
-    """Health check endpoint для Render"""
     uptime = datetime.now() - start_time
     return web.Response(text=f"Bot OK | Uptime: {str(uptime).split('.')[0]} | Errors: {error_counter}")
 
 async def send_startup_notification():
-    """Уведомление о запуске бота"""
     try:
         bot_info = await bot.get_me()
         msg = (
@@ -731,14 +612,12 @@ async def send_startup_notification():
         logger.error(f"Не удалось отправить startup notification: {e}")
 
 async def main():
-    """Основная функция запуска"""
-    
     if not TOKEN:
         logger.error("❌ ОШИБКА: BOT_TOKEN не установлен!")
         raise ValueError("BOT_TOKEN не установлен")
     
     if not CEREBRAS_API_KEY:
-        logger.warning("⚠️ ВНИМАНИЕ: AI_API_KEY не установлен! AI функции будут недоступны.")
+        logger.warning("⚠️ AI_API_KEY не установлен! Будет использоваться демо-режим.")
     
     app = web.Application()
     app.router.add_get('/', handle_health)
@@ -755,15 +634,14 @@ async def main():
     
     logger.info(f"✅ Мета-Навигатор запущен")
     logger.info(f"🤖 Bot: @{(await bot.get_me()).username}")
-    logger.info(f"🔑 Cerebras API: {'✅ Настроен' if CEREBRAS_API_KEY else '❌ Нет ключа'}")
+    logger.info(f"🔑 Cerebras API: {'✅' if CEREBRAS_API_KEY else '❌'}")
     logger.info(f"🌐 Health check: http://0.0.0.0:{port}/")
-    logger.info(f"📊 Порт: {port}")
     
     try:
         await dp.start_polling(bot)
     except Exception as e:
         logger.critical(f"Бот упал: {e}")
-        await send_admin_alert("bot_crash", f"Бот полностью остановлен: {str(e)}", traceback.format_exc())
+        await send_admin_alert("bot_crash", f"Бот остановлен: {str(e)}", traceback.format_exc())
         raise
 
 if __name__ == "__main__":
