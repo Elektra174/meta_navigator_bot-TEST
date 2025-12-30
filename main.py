@@ -313,7 +313,7 @@ async def process_answer(message: types.Message, state: FSMContext):
         else:
             await state.update_data(answers=user_answers)
             await message.answer(
-                "🌀 **Синхронизирую данные...**\nАнализирую Ваши ответы и ищу точку Сдвига.",
+                "🌀 **Синхронизирую данные...**\nАнализирую Ваши ответы..",
                 parse_mode="Markdown"
             )
             
@@ -353,13 +353,13 @@ async def send_offer_buttons(message: types.Message):
     builder = InlineKeyboardBuilder()
     builder.row(
         types.InlineKeyboardButton(
-            text="📥 Скачать Гайд «Ревизия маршрута»", 
+            text="📥 СКАЧАТЬ ГАЙД "РЕВИЗИЯ МАРШРУТА", 
             url=GUIDE_URL
         )
     )
     builder.row(
         types.InlineKeyboardButton(
-            text="🎬 Купить мастер-класс «Сдвиг оптики»", 
+            text="🎬 ЗАБРАТЬ МАСТЕР-КЛАСС «СДВИГ ОПТИКИ»", 
             url=MASTERCLASS_URL
         )
     )
@@ -652,3 +652,4 @@ if __name__ == "__main__":
     except Exception as e:
         logger.critical(f"Критическая ошибка при запуске: {e}")
         exit(1)
+
