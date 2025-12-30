@@ -23,7 +23,7 @@ ADMIN_ID = 7830322013
 LOGO_FORMULA_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/logo.png.png"
 LOGO_NAVIGATOR_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/logo11.png"
 GUIDE_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/guide.pdf"
-MASTERCLASS_URL = "https://youtube.com/playlist?list=PLyour_playlist_id"  # Замените на реальную ссылку
+MASTERCLASS_URL = "https://youtube.com/playlist?list=PLyour_playlist_id"
 CHANNEL_URL = "https://t.me/metaformula_life"
 
 # Настройка логирования
@@ -322,6 +322,8 @@ async def process_answer(message: types.Message, state: FSMContext):
             if report:
                 # Очищаем отчет от возможных проблем с Markdown
                 clean_report = sanitize_markdown(report)
+                # Убираем лишнее "ТЕ" из формулы
+                clean_report = clean_report.replace("ИСПОЛЬЗУЙТЕ ТЕ ", "ИСПОЛЬЗУЙТЕ ")
                 await message.answer(clean_report, parse_mode="Markdown")
                 
                 # Отправляем кнопки после отчета
@@ -354,7 +356,7 @@ async def send_offer_buttons(message: types.Message):
     builder.row(
         types.InlineKeyboardButton(
             text='📥 СКАЧАТЬ ГАЙД "РЕВИЗИЯ МАРШРУТА"', 
-            url=GUIDE_URL
+            callback_data="download_guide"
         )
     )
     builder.row(
@@ -370,52 +372,93 @@ async def send_offer_buttons(message: types.Message):
         reply_markup=builder.as_markup()
     )
 
+@dp.callback_query(F.data == "download_guide")
+async def handle_download_guide(callback: types.CallbackQuery):
+    """Отправка гайда в чат"""
+    await callback.answer("Отправляю гайд...")
+    
+    try:
+        # Отправляем PDF файл
+        await callback.message.answer_document(
+            document=GUIDE_URL,
+            caption="📥 **Гайд «Ревизия маршрута»**\n\nВаш пошаговый план для самостоятельной работы над Метаформулой."
+        )
+    except Exception as e:
+        logger.error(f"Ошибка отправки гайда: {e}")
+        await callback.answer("Ошибка отправки гайда", show_alert=True)
+
 # --- УТИЛИТЫ ДЛЯ ОЧИСТКИ MARKDOWN ---
 def sanitize_markdown(text: str) -> str:
-    """Очищает текст от проблемных символов Markdown"""
-    # Экранируем проблемные символы
-    replacements = {
-        '_': r'\_',
-        '*': r'\*',
-        '[': r'\[',
-        ']': r'\]',
-        '(': r'\(',
-        ')': r'\)',
-        '~': r'\~',
-        '`': r'\`',
-        '>': r'\>',
-        '#': r'\#',
-        '+': r'\+',
-        '-': r'\-',
-        '=': r'\=',
-        '|': r'\|',
-        '{': r'\{',
-        '}': r'\}',
-        '.': r'\.',
-        '!': r'\!'
+    """Очищает текст от проблемных символов Markdown и лишних обратных слэшей"""
+    # Сначала убираем обратные слэши перед символами Markdown
+    replacements_to_remove = {
+        r'\\#': '#',
+        r'\\##': '##',
+        r'\\###': '###',
+        r'\\---': '---',
+        r'\\-\-\-': '---',
+        r'\\\.': '.',
+        r'\\\-': '-',
+        r'\\\*': '*',
+        r'\\\_': '_',
+        r'\\\[': '[',
+        r'\\\]': ']',
+        r'\\\(': '(',
+        r'\\\)': ')',
+        r'\\\~': '~',
+        r'\\\`': '`',
+        r'\\\>': '>',
+        r'\\\+': '+',
+        r'\\\=': '=',
+        r'\\\|': '|',
+        r'\\\{': '{',
+        r'\\\}': '}',
+        r'\\\!': '!',
     }
     
-    # Не экранируем символы внутри кодовых блоков
+    # Применяем очистку от обратных слэшей
+    for pattern, replacement in replacements_to_remove.items():
+        text = re.sub(pattern, replacement, text)
+    
+    # Теперь экранируем только действительно опасные символы для Markdown
+    # но не трогаем заголовки и разделители
     lines = text.split('\n')
     result_lines = []
     in_code_block = False
     
     for line in lines:
+        # Проверяем, не является ли строка заголовком или разделителем
+        is_header = line.strip().startswith('#') and not line.strip().startswith('\\#')
+        is_divider = line.strip() == '---' or line.strip() == '\\---'
+        
         if line.strip().startswith('```'):
             in_code_block = not in_code_block
             result_lines.append(line)
             continue
             
-        if in_code_block:
+        if in_code_block or is_header or is_divider:
+            # Не экранируем заголовки, разделители и код
             result_lines.append(line)
         else:
-            # Экранируем только если не в кодовом блоке
+            # Экранируем только опасные символы в обычном тексте
             clean_line = line
-            for char, escaped in replacements.items():
-                clean_line = clean_line.replace(char, escaped)
+            
+            # Экранируем только определенные символы
+            dangerous_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>']
+            for char in dangerous_chars:
+                if char in clean_line:
+                    # Не экранируем если уже есть обратный слэш
+                    if f'\\{char}' not in clean_line:
+                        clean_line = clean_line.replace(char, f'\\{char}')
+            
             result_lines.append(clean_line)
     
-    return '\n'.join(result_lines)
+    text = '\n'.join(result_lines)
+    
+    # Убираем двойные обратные слэши
+    text = text.replace('\\\\', '\\')
+    
+    return text
 
 def postprocess_report(report: str, answers: list) -> str:
     """Постобработка отчета"""
@@ -458,12 +501,16 @@ def postprocess_report(report: str, answers: list) -> str:
             
             polite_verb = polite_verbs.get(verb, verb)
             
-            # Исправляем грамматику
+            # Исправляем грамматику и убираем лишнее "ТЕ"
             grammar_fixes = {
                 "ЧТОБЫ НАЧНИТЕ": "ЧТОБЫ НАЧАТЬ",
                 "ЧТОБЫ СДЕЛАЙТЕ": "ЧТОБЫ СДЕЛАТЬ",
                 "ДЛЯ БИЗНЕСА": "ДЛЯ ДЕЛА",
-                "НАЙТИ БИЗНЕС": "НАЙТИ ДЕЛО"
+                "НАЙТИ БИЗНЕС": "НАЙТИ ДЕЛО",
+                "ТЕ НАГЛОСТЬ": "НАГЛОСТЬ",
+                "ИСПОЛЬЗУЙТЕ ТЕ ": "ИСПОЛЬЗУЙТЕ ",
+                "ВОЗЬМИТЕ ТЕ ": "ВОЗЬМИТЕ ",
+                "ПРИМЕНИТЕ ТЕ ": "ПРИМЕНИТЕ ",
             }
             
             formula = f"{polite_verb} {rest}"
