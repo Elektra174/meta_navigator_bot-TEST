@@ -22,7 +22,7 @@ ADMIN_ID = 7830322013
 # Ресурсы проекта
 LOGO_FORMULA_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/logo.png.png"
 LOGO_NAVIGATOR_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/logo11.png"
-GUIDE_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/reviz_guide.pdf"
+GUIDE_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/revizia_guide.pdf"
 MASTERCLASS_URL = "https://youtube.com/playlist?list=PLyour_playlist_id"
 CHANNEL_URL = "https://t.me/metaformula_life"
 
@@ -53,7 +53,7 @@ QUESTIONS = [
     "Если бы ваше текущее состояние можно было описать метафорой или образом... на что бы это было похоже? (Например: «топчусь на раскаленной плите», «пробиваю лбом стену», «выбираюсь из болота»). Опишите детально.",
     "Где в теле вы чувствуете это состояние? Какие конкретные ощущения: тяжесть, холод, жжение, сжатие, пустота?",
     "Что вас больше всего бесит/раздражает в других людях? Какое качество или поведение вызывает самую сильную эмоциональная реакция?",
-    "Какую цену вы платите за сохранение текущего положения? Что и в каком объеме уходит прямо сейчас? (время, деньги, силы, отношения)*",
+    "Какую цену вы платите за сохранение текущего положения? Что и в каком объеме уходит прямо сейчас? (время, деньги, силы, отношения)",
     "Вы готовы прямо сейчас взять управление на себя и стать Автором этих изменений? (Да/Нет с пояснением)"
 ]
 
@@ -306,7 +306,7 @@ async def start_audit_flow(callback: types.CallbackQuery, state: FSMContext):
         )
         
         await asyncio.sleep(1)
-        await callback.message.answer(f"📝 *Шаг 1 из {len(QUESTIONS)}:*\n\n{QUESTIONS[0]}", parse_mode="Markdown")
+        await callback.message.answer(f"📝 Шаг 1 из {len(QUESTIONS)}:\n\n{QUESTIONS[0]}")
         await state.set_state(AuditState.answering_questions)
         
     except Exception as e:
@@ -331,16 +331,13 @@ async def process_answer(message: types.Message, state: FSMContext):
 
         if next_step < len(QUESTIONS):
             await state.update_data(current_step=next_step, answers=user_answers)
-            await message.answer(
-                f"📝 *Шаг {next_step + 1} из {len(QUESTIONS)}:*\n\n{QUESTIONS[next_step]}",
-                parse_mode="Markdown"
-            )
+            # Отправляем следующий вопрос БЕЗ Markdown
+            await message.answer(f"📝 Шаг {next_step + 1} из {len(QUESTIONS)}:\n\n{QUESTIONS[next_step]}")
         else:
             await state.update_data(answers=user_answers)
             await message.answer(
-                "🧠 **Синхронизирую данные с когнитивным ядром...**\n"
-                "Анализирую ваши ответы через призму нейрофизиологии и теории доминанты...",
-                parse_mode="Markdown"
+                "🧠 Синхронизирую данные с когнитивным ядром...\n"
+                "Анализирую ваши ответы через призму нейрофизиологии и теории доминанты..."
             )
             
             # Генерируем отчет с обработкой возможных ошибок
@@ -349,7 +346,7 @@ async def process_answer(message: types.Message, state: FSMContext):
                 
                 if report:
                     # Безопасная очистка от Markdown разметки
-                    clean_report = remove_markdown_safe(report)
+                    clean_report = clean_text_for_telegram(report)
                     
                     # Отправляем отчет пользователю БЕЗ parse_mode
                     await message.answer(clean_report)
@@ -466,35 +463,24 @@ async def handle_download_guide(callback: types.CallbackQuery):
         logger.error(f"Ошибка отправки гайда: {e}")
         await callback.answer("Ошибка отправки гайда", show_alert=True)
 
-# --- УТИЛИТЫ ДЛЯ ОЧИСТКИ MARKDOWN ---
-def remove_markdown_safe(text: str) -> str:
-    """Безопасное удаление Markdown разметки"""
+# --- УТИЛИТЫ ДЛЯ ОЧИСТКИ ТЕКСТА ---
+def clean_text_for_telegram(text: str) -> str:
+    """Безопасная очистка текста для отправки в Telegram"""
     if not text:
         return ""
     
-    # Убираем все символы Markdown, которые могут вызвать ошибки
-    # Оставляем только текст и эмодзи
-    replacements = [
-        ('*', ''),
-        ('_', ''),
-        ('`', ''),
-        ('~', ''),
-        ('#', ''),
-        ('[', ''),
-        (']', ''),
-        ('(', ''),
-        (')', ''),
-        ('\\', ''),  # Убираем экранирующие слэши
-    ]
+    # Удаляем все символы Markdown, которые могут вызвать ошибки
+    # Но оставляем эмодзи
+    markdown_chars = ['_', '*', '`', '[', ']', '(', ')', '~', '>', '#', '+', '-', '=', '|', '{', '}', '\\']
     
     result = text
-    for old, new in replacements:
-        result = result.replace(old, new)
+    for char in markdown_chars:
+        result = result.replace(char, '')
     
-    # Убираем лишние пробелы, которые могли образоваться
+    # Убираем лишние пробелы
     result = re.sub(r'\s+', ' ', result)
     
-    return result
+    return result.strip()
 
 def calculate_automatism_index(answers: list) -> int:
     """Рассчитывает индекс автоматизма на основе анализа речи"""
