@@ -157,10 +157,10 @@ async def send_admin_alert(alert_type: str, details: str, tb: str = ""):
     try:
         ts = datetime.now().strftime("%d.%m %H:%M:%S")
         
-        # Безопасный текст для администратора - без Markdown
+        # Безопасный текст для администратора
         msg = f"🚨 PROBLEM: {alert_type.upper()}\n\n"
         msg += f"⏰ Время: {ts}\n"
-        msg += f"📝 Детали: {escape_text_for_plain(details)}\n"
+        msg += f"📝 Детали: {details}\n"
         
         if tb:
             # Отправляем traceback как отдельное сообщение, если он слишком большой
@@ -177,11 +177,10 @@ async def send_admin_alert(alert_type: str, details: str, tb: str = ""):
                     caption=f"Traceback для ошибки: {alert_type}"
                 )
             else:
-                msg += f"\n🔧 Traceback:\n```\n{tb[:800]}\n```"
+                msg += f"\n🔧 Traceback:\n{tb[:800]}"
         
         msg += f"\n\n📊 Статистика: Ошибок: {error_counter} | Сбоев API: {api_failures}"
         
-        # Отправляем БЕЗ parse_mode
         await bot.send_message(chat_id=ADMIN_ID, text=msg)
     except Exception as e:
         logger.error(f"Не удалось отправить алерт: {e}")
@@ -189,13 +188,20 @@ async def send_admin_alert(alert_type: str, details: str, tb: str = ""):
 async def send_admin_copy(user: types.User, answers: list, report: str):
     try:
         user_info = f"👤 {user.full_name} (@{user.username})"
-        text_answers = "\n".join([f"{i+1}. {escape_text_for_plain(a)}" for i, a in enumerate(answers)])
+        text_answers = "\n".join([f"{i+1}. {a}" for i, a in enumerate(answers)])
         
-        # Безопасный формат для администратора - без Markdown
-        full_log = f"🔔 НОВЫЙ АУДИТ ЗАВЕРШЕН\n{user_info}\n\nОтветы:\n{text_answers}\n\nОтчет ИИ:\n{escape_text_for_plain(report)}"
+        # Правильный формат с сохранением переносов строк
+        full_log = (
+            "🔔 НОВЫЙ АУДИТ ЗАВЕРШЕН\n\n"
+            f"{user_info}\n\n"
+            "📝 Ответы пользователя:\n"
+            f"{text_answers}\n\n"
+            "🧠 Отчет ИИ:\n"
+            f"{report}"
+        )
         
         if len(full_log) > 4000:
-            # Разбиваем на части и отправляем БЕЗ parse_mode
+            # Разбиваем на части
             await bot.send_message(chat_id=ADMIN_ID, text=full_log[:4000])
             await bot.send_message(chat_id=ADMIN_ID, text=full_log[4000:8000] if len(full_log) > 8000 else full_log[4000:])
         else:
@@ -203,12 +209,23 @@ async def send_admin_copy(user: types.User, answers: list, report: str):
     except Exception as e:
         logger.error(f"Admin log error: {e}")
 
-def escape_text_for_plain(text: str) -> str:
-    """Экранирует только самые опасные символы для plain text"""
-    if not text:
+def clean_report_for_telegram(report: str) -> str:
+    """Очищает отчет для красивого отображения в Telegram"""
+    if not report:
         return ""
-    # Заменяем только переносы строк на видимые символы в логах
-    return text.replace('\n', '\\n').replace('\r', '\\r')
+    
+    # Убираем escape-последовательности
+    report = report.replace('\\n', '\n').replace('\\r', '\r')
+    
+    # Убираем лишние пробелы и переносы
+    report = re.sub(r'\n{3,}', '\n\n', report)
+    
+    # Убираем markdown символы
+    report = re.sub(r'\*\*(.*?)\*\*', r'\1', report)
+    report = re.sub(r'\*(.*?)\*', r'\1', report)
+    report = report.replace('`', '')
+    
+    return report
 
 # --- ОБРАБОТЧИКИ ---
 @dp.message(Command("start"))
@@ -337,7 +354,6 @@ async def start_audit_flow(callback: types.CallbackQuery, state: FSMContext):
         )
         
         await asyncio.sleep(1)
-        # Отправляем вопросы БЕЗ parse_mode
         await callback.message.answer(f"📝 Шаг 1 из {len(QUESTIONS)}:\n\n{QUESTIONS[0]}")
         await state.set_state(AuditState.answering_questions)
         
@@ -363,7 +379,6 @@ async def process_answer(message: types.Message, state: FSMContext):
 
         if next_step < len(QUESTIONS):
             await state.update_data(current_step=next_step, answers=user_answers)
-            # Отправляем следующий вопрос БЕЗ parse_mode
             await message.answer(f"📝 Шаг {next_step + 1} из {len(QUESTIONS)}:\n\n{QUESTIONS[next_step]}")
         else:
             await state.update_data(answers=user_answers)
@@ -377,14 +392,15 @@ async def process_answer(message: types.Message, state: FSMContext):
                 report = await generate_ai_report(user_answers)
                 
                 if report:
-                    # Отправляем отчет пользователю БЕЗ parse_mode
-                    await message.answer(report)
+                    # Очищаем и отправляем отчет пользователю
+                    clean_report = clean_report_for_telegram(report)
+                    await message.answer(clean_report)
                     
                     # Отправляем кнопки после отчета
                     await send_offer_buttons(message)
                     
                     # Отправляем копию администратору
-                    await send_admin_copy(message.from_user, user_answers, report)
+                    await send_admin_copy(message.from_user, user_answers, clean_report)
                 else:
                     # Если отчет пустой, отправляем сообщение об ошибке
                     logger.error("Отчет ИИ вернул пустой результат")
@@ -419,7 +435,6 @@ async def process_answer(message: types.Message, state: FSMContext):
         error_counter += 1
         logger.error(f"Ошибка обработки ответа: {e}")
         await send_admin_alert("process_error", str(e), traceback.format_exc())
-        # Упрощенное сообщение об ошибке
         await message.answer(
             "⚠️ Произошла техническая ошибка при обработке вашего ответа.\n\n"
             "Пожалуйста, начните аудит заново с команды /start"
@@ -458,7 +473,6 @@ async def send_offer_buttons(message: types.Message):
         )
     except Exception as e:
         logger.error(f"Ошибка отправки кнопок: {e}")
-        # Пытаемся отправить без форматирования
         try:
             await message.answer(
                 "🎯 Ваш нейрокогнитивный аудит завершен!\n\n"
@@ -475,7 +489,6 @@ async def handle_download_guide(callback: types.CallbackQuery):
     await callback.answer("Отправляю гайд...")
     
     try:
-        # Отправляем PDF файл с обновленной фразой
         await callback.message.answer_document(
             document=GUIDE_URL,
             caption=(
@@ -545,50 +558,54 @@ def postprocess_report(report: str, answers: list) -> str:
         automatism_index = calculate_automatism_index(answers)
         
         # Вставляем индекс в отчет
-        if "ИНДЕКС АВТОМАТИЗМА:" in report:
+        if "ИНДЕКС АВТОМАТИЗМА:" in report or "Индекс автоматизма:" in report:
             # Заменяем placeholder на реальное значение
             report = re.sub(
-                r'ИНДЕКС АВТОМАТИЗМА:\s*\[X\]%',
+                r'(ИНДЕКС АВТОМАТИЗМА|Индекс автоматизма):\s*\[X\]%',
                 f'ИНДЕКС АВТОМАТИЗМА: {automatism_index}%',
                 report,
                 flags=re.IGNORECASE
             )
         else:
             # Добавляем индекс, если его нет
-            report = report.replace("🧭 РЕЗУЛЬТАТЫ АУДИТА АВТОПИЛОТА", 
-                                  f"🧭 РЕЗУЛЬТАТЫ АУДИТА АВТОПИЛОТА\n\n📊 ВАШ ИНДЕКС АВТОМАТИЗМА: {automatism_index}%")
+            if "🧭 РЕЗУЛЬТАТЫ АУДИТА" in report:
+                report = report.replace("🧭 РЕЗУЛЬТАТЫ АУДИТА", 
+                                      f"🧭 РЕЗУЛЬТАТЫ АУДИТА\n\n📊 ВАШ ИНДЕКС АВТОМАТИЗМА: {automatism_index}%")
         
         # Добавляем комментарий к индексу
         comment = ""
         if automatism_index >= 80:
-            comment = "Ваша речь указывает на высокую степень зависимости от внешних обстоятельств. Вы действуете преимущественно в режиме «Реагирования», а не «Создания»."
+            comment = "Высокая степень зависимости от внешних обстоятельств. Режим «Реагирования» преобладает."
         elif automatism_index >= 60:
-            comment = "Вы находитесь в переходном состоянии: частично осознаете свои паттерны, но еще сильно связаны автоматическими реакциями."
+            comment = "Переходное состояние: есть осознание, но сильны автоматические реакции."
         else:
-            comment = "У вас хороший уровень осознанности и авторской позиции. Осталось лишь систематизировать этот ресурс."
+            comment = "Хороший уровень осознанности и авторской позиции."
         
         if comment:
-            if "📊 ВАШ ИНДЕКС АВТОМАТИЗМА:" in report:
-                report = report.replace(f"📊 ВАШ ИНДЕКС АВТОМАТИЗМА: {automatism_index}%",
-                                      f"📊 ВАШ ИНДЕКС АВТОМАТИЗМА: {automatism_index}%\n({comment})")
+            report = report.replace(f"ИНДЕКС АВТОМАТИЗМА: {automatism_index}%",
+                                  f"ИНДЕКС АВТОМАТИЗМА: {automatism_index}%\n({comment})")
         
-        # Убираем остатки placeholders
+        # Убираем markdown символы для чистого текста
         report = re.sub(r'\[.*?\]', '', report)
+        report = re.sub(r'\*\*|\*|`', '', report)
         
-        # Упрощаем формулу, если она слишком сложная
-        formula_pattern = r'🔑 ВАША МЕТАФОРМУЛА \(КОД АКТИВАЦИИ\)\s*(.+?)(?=\n\n|\n🚀)'
+        # Упрощаем формулу
+        formula_pattern = r'🔑 ВАША МЕТАФОРМУЛА.*?\n(.+?)(?=\n\n|\n🚀|\n🎯)'
         match = re.search(formula_pattern, report, re.DOTALL | re.IGNORECASE)
         
         if match:
             formula = match.group(1).strip()
             # Упрощаем формулу до 3-5 слов
-            words = formula.split()
+            words = [w for w in formula.split() if w]
             if len(words) > 5:
                 simple_formula = ' '.join(words[:5]).upper()
                 report = report.replace(formula, simple_formula)
         
         # Убираем лишние пустые строки
         report = re.sub(r'\n{3,}', '\n\n', report)
+        
+        # Убираем escape-последовательности
+        report = report.replace('\\n', '\n').replace('\\t', '\t')
         
         return report
         
@@ -701,7 +718,6 @@ async def send_startup_notification():
             f"🌐 Health check: доступен\n"
             f"⚙️ Версия: Нейрокогнитивный Аудит v2.0"
         )
-        # Отправляем БЕЗ parse_mode
         await bot.send_message(chat_id=ADMIN_ID, text=msg)
     except Exception as e:
         logger.error(f"Не удалось отправить startup notification: {e}")
@@ -754,6 +770,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.critical(f"Критическая ошибка при запуске: {e}")
         exit(1)
-
-
-
