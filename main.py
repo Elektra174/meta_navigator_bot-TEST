@@ -3,6 +3,7 @@ import asyncio
 import traceback
 import logging
 import re
+import html
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -155,29 +156,59 @@ async def send_admin_alert(alert_type: str, details: str, tb: str = ""):
     global error_counter, api_failures
     try:
         ts = datetime.now().strftime("%d.%m %H:%M:%S")
-        msg = f"🚨 *PROBLEM: {alert_type.upper()}*\n\n"
-        msg += f"⏰ *Время:* {ts}\n"
-        msg += f"📝 *Детали:* {details}\n"
+        
+        # Безопасный текст для администратора - без Markdown
+        msg = f"🚨 PROBLEM: {alert_type.upper()}\n\n"
+        msg += f"⏰ Время: {ts}\n"
+        msg += f"📝 Детали: {escape_text_for_plain(details)}\n"
+        
         if tb:
-            msg += f"\n🔧 *Traceback:*\n```python\n{tb[:1000]}```"
-        msg += f"\n\n📊 *Статистика:* Ошибок: {error_counter} | Сбоев API: {api_failures}"
-        await bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+            # Отправляем traceback как отдельное сообщение, если он слишком большой
+            if len(tb) > 1000:
+                msg += f"\n🔧 Traceback: (отправлен отдельным файлом)"
+                
+                # Отправляем traceback как текстовый файл
+                await bot.send_document(
+                    chat_id=ADMIN_ID,
+                    document=types.BufferedInputFile(
+                        tb.encode('utf-8'),
+                        filename=f"traceback_{ts.replace(':', '-').replace(' ', '_')}.txt"
+                    ),
+                    caption=f"Traceback для ошибки: {alert_type}"
+                )
+            else:
+                msg += f"\n🔧 Traceback:\n```\n{tb[:800]}\n```"
+        
+        msg += f"\n\n📊 Статистика: Ошибок: {error_counter} | Сбоев API: {api_failures}"
+        
+        # Отправляем БЕЗ parse_mode
+        await bot.send_message(chat_id=ADMIN_ID, text=msg)
     except Exception as e:
         logger.error(f"Не удалось отправить алерт: {e}")
 
 async def send_admin_copy(user: types.User, answers: list, report: str):
     try:
         user_info = f"👤 {user.full_name} (@{user.username})"
-        text_answers = "\n".join([f"{i+1}. {a}" for i, a in enumerate(answers)])
-        full_log = f"🔔 **НОВЫЙ АУДИТ ЗАВЕРШЕН**\n{user_info}\n\n**Ответы:**\n{text_answers}\n\n**Отчет ИИ:**\n{report}"
+        text_answers = "\n".join([f"{i+1}. {escape_text_for_plain(a)}" for i, a in enumerate(answers)])
+        
+        # Безопасный формат для администратора - без Markdown
+        full_log = f"🔔 НОВЫЙ АУДИТ ЗАВЕРШЕН\n{user_info}\n\nОтветы:\n{text_answers}\n\nОтчет ИИ:\n{escape_text_for_plain(report)}"
         
         if len(full_log) > 4000:
+            # Разбиваем на части и отправляем БЕЗ parse_mode
             await bot.send_message(chat_id=ADMIN_ID, text=full_log[:4000])
-            await bot.send_message(chat_id=ADMIN_ID, text=full_log[4000:])
+            await bot.send_message(chat_id=ADMIN_ID, text=full_log[4000:8000] if len(full_log) > 8000 else full_log[4000:])
         else:
-            await bot.send_message(chat_id=ADMIN_ID, text=full_log, parse_mode="Markdown")
+            await bot.send_message(chat_id=ADMIN_ID, text=full_log)
     except Exception as e:
         logger.error(f"Admin log error: {e}")
+
+def escape_text_for_plain(text: str) -> str:
+    """Экранирует только самые опасные символы для plain text"""
+    if not text:
+        return ""
+    # Заменяем только переносы строк на видимые символы в логах
+    return text.replace('\n', '\\n').replace('\r', '\\r')
 
 # --- ОБРАБОТЧИКИ ---
 @dp.message(Command("start"))
@@ -306,6 +337,7 @@ async def start_audit_flow(callback: types.CallbackQuery, state: FSMContext):
         )
         
         await asyncio.sleep(1)
+        # Отправляем вопросы БЕЗ parse_mode
         await callback.message.answer(f"📝 Шаг 1 из {len(QUESTIONS)}:\n\n{QUESTIONS[0]}")
         await state.set_state(AuditState.answering_questions)
         
@@ -331,7 +363,7 @@ async def process_answer(message: types.Message, state: FSMContext):
 
         if next_step < len(QUESTIONS):
             await state.update_data(current_step=next_step, answers=user_answers)
-            # Отправляем следующий вопрос БЕЗ Markdown
+            # Отправляем следующий вопрос БЕЗ parse_mode
             await message.answer(f"📝 Шаг {next_step + 1} из {len(QUESTIONS)}:\n\n{QUESTIONS[next_step]}")
         else:
             await state.update_data(answers=user_answers)
@@ -345,17 +377,14 @@ async def process_answer(message: types.Message, state: FSMContext):
                 report = await generate_ai_report(user_answers)
                 
                 if report:
-                    # Безопасная очистка от Markdown разметки
-                    clean_report = clean_text_for_telegram(report)
-                    
                     # Отправляем отчет пользователю БЕЗ parse_mode
-                    await message.answer(clean_report)
+                    await message.answer(report)
                     
                     # Отправляем кнопки после отчета
                     await send_offer_buttons(message)
                     
                     # Отправляем копию администратору
-                    await send_admin_copy(message.from_user, user_answers, clean_report)
+                    await send_admin_copy(message.from_user, user_answers, report)
                 else:
                     # Если отчет пустой, отправляем сообщение об ошибке
                     logger.error("Отчет ИИ вернул пустой результат")
@@ -462,25 +491,6 @@ async def handle_download_guide(callback: types.CallbackQuery):
     except Exception as e:
         logger.error(f"Ошибка отправки гайда: {e}")
         await callback.answer("Ошибка отправки гайда", show_alert=True)
-
-# --- УТИЛИТЫ ДЛЯ ОЧИСТКИ ТЕКСТА ---
-def clean_text_for_telegram(text: str) -> str:
-    """Безопасная очистка текста для отправки в Telegram"""
-    if not text:
-        return ""
-    
-    # Удаляем все символы Markdown, которые могут вызвать ошибки
-    # Но оставляем эмодзи
-    markdown_chars = ['_', '*', '`', '[', ']', '(', ')', '~', '>', '#', '+', '-', '=', '|', '{', '}', '\\']
-    
-    result = text
-    for char in markdown_chars:
-        result = result.replace(char, '')
-    
-    # Убираем лишние пробелы
-    result = re.sub(r'\s+', ' ', result)
-    
-    return result.strip()
 
 def calculate_automatism_index(answers: list) -> int:
     """Рассчитывает индекс автоматизма на основе анализа речи"""
@@ -682,16 +692,17 @@ async def send_startup_notification():
     try:
         bot_info = await bot.get_me()
         msg = (
-            "🚀 *МЕТА-НАВИГАТОР v2.0 ЗАПУЩЕН*\n\n"
-            f"⏰ *Время:* {datetime.now().strftime('%d.%m %H:%M:%S')}\n"
-            f"🤖 *Бот:* @{bot_info.username}\n"
-            f"🧠 *Модель:* Llama-3.3-70b\n"
-            f"🔑 *Cerebras API:* {'✅' if CEREBRAS_API_KEY else '❌ ДЕМО-РЕЖИМ'}\n"
-            f"📊 *Порт:* {os.environ.get('PORT', 8080)}\n"
-            f"🌐 *Health check:* доступен\n"
-            f"⚙️ *Версия:* Нейрокогнитивный Аудит v2.0"
+            "🚀 МЕТА-НАВИГАТОР v2.0 ЗАПУЩЕН\n\n"
+            f"⏰ Время: {datetime.now().strftime('%d.%m %H:%M:%S')}\n"
+            f"🤖 Бот: @{bot_info.username}\n"
+            f"🧠 Модель: Llama-3.3-70b\n"
+            f"🔑 Cerebras API: {'✅' if CEREBRAS_API_KEY else '❌ ДЕМО-РЕЖИМ'}\n"
+            f"📊 Порт: {os.environ.get('PORT', 8080)}\n"
+            f"🌐 Health check: доступен\n"
+            f"⚙️ Версия: Нейрокогнитивный Аудит v2.0"
         )
-        await bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+        # Отправляем БЕЗ parse_mode
+        await bot.send_message(chat_id=ADMIN_ID, text=msg)
     except Exception as e:
         logger.error(f"Не удалось отправить startup notification: {e}")
 
