@@ -23,7 +23,7 @@ ADMIN_ID = 7830322013
 # Ресурсы проекта
 LOGO_FORMULA_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/logo.png.png"
 LOGO_NAVIGATOR_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/logo11.png"
-GUIDE_URL = "https://github.com/Elektra174/meta_navigator_bot/raw/main/revizia_gid.pdf"
+GUIDE_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/reviziaguide.pdf"
 MASTERCLASS_URL = "https://youtube.com/playlist?list=PLyour_playlist_id"
 CHANNEL_URL = "https://t.me/metaformula_life"
 
@@ -446,43 +446,84 @@ async def process_answer(message: types.Message, state: FSMContext):
 async def send_guide_immediately(message: types.Message):
     """Сразу отправляет PDF гайд после отчета"""
     try:
-        # Отправляем PDF файл как документ
-        await message.answer_document(
-            document=GUIDE_URL,
-            caption=(
-                "📥 **Гайд «Ревизия маршрута»**\n\n"
-                "Ваш путеводитель к состоянию Автора жизни с помощью Метаформулы.\n\n"
-                "Внутри вы найдете:\n"
-                "• Инженерные инструкции по внедрению Метаформулы\n"
-                "• Протоколы для отключения Дефолт-системы\n"
-                "• Техники создания новой Доминанты\n"
-                "• Систему мониторинга энергетического бюджета"
-            ),
-            parse_mode="Markdown"
+        # Создаем клавиатуру с кнопкой для скачивания
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            types.InlineKeyboardButton(
+                text="📥 СКАЧАТЬ ГАЙД «РЕВИЗИЯ МАРШРУТА»",
+                url=GUIDE_URL
+            )
         )
         
+        # Отправляем сообщение с кнопкой
+        guide_message = await message.answer(
+            "📘 **Гайд «Ревизия маршрута» готов к скачиванию!**\n\n"
+            "Ваш персональный путеводитель к состоянию Автора жизни с помощью Метаформулы.\n\n"
+            "Внутри вы найдете:\n"
+            "• 🛠️ Инженерные инструкции по внедрению Метаформулы\n"
+            "• 🔋 Протоколы для отключения Дефолт-системы\n"
+            "• 🧭 Техники создания новой Доминанты\n"
+            "• 📊 Систему мониторинга энергетического бюджета\n\n"
+            "Нажмите кнопку ниже, чтобы скачать:",
+            parse_mode="Markdown",
+            reply_markup=builder.as_markup(),
+            disable_web_page_preview=True
+        )
+        
+        # Также пробуем отправить как документ
+        try:
+            await asyncio.sleep(0.5)
+            await message.answer_document(
+                document=GUIDE_URL,
+                caption="📥 Ваш гайд «Ревизия маршрута»",
+                parse_mode="Markdown"
+            )
+        except Exception as doc_error:
+            logger.warning(f"Не удалось отправить как документ: {doc_error}")
+            # Пробуем альтернативный формат
+            try:
+                await message.answer(
+                    "📥 **Альтернативная ссылка для скачивания:**\n"
+                    f"{GUIDE_URL}\n\n"
+                    "Если кнопка не работает, скопируйте эту ссылку в браузер.",
+                    parse_mode="Markdown"
+                )
+            except Exception as alt_error:
+                logger.error(f"Не удалось отправить альтернативную ссылку: {alt_error}")
+                
     except Exception as e:
         logger.error(f"Ошибка отправки гайда: {e}")
+        
+        # Резервное сообщение с прямой ссылкой
         try:
-            # Альтернатива: отправляем сообщение с прямой ссылкой
             await message.answer(
-                "📥 **Гайд «Ревизия маршрута»**\n\n"
+                "📘 **Гайд «Ревизия маршрута»**\n\n"
                 f"Скачать можно по ссылке:\n{GUIDE_URL}\n\n"
-                "Нажмите на ссылку и выберите «Скачать» в правом верхнем углу.",
+                "Нажмите на ссылку выше и выберите «Скачать» в правом верхнем углу экрана.",
                 parse_mode="Markdown",
                 disable_web_page_preview=False
             )
-        except Exception as e2:
-            logger.error(f"Альтернативный метод тоже не сработал: {e2}")
+        except Exception as fallback_error:
+            logger.error(f"Резервный метод тоже не сработал: {fallback_error}")
 
 async def send_masterclass_button(message: types.Message):
-    """Отправляет кнопку для мастер-класса"""
+    """Отправляет кнопки для мастер-класса и дополнительной кнопки для гайда"""
     try:
         builder = InlineKeyboardBuilder()
+        
+        # Первая строка: Мастер-класс
         builder.row(
             types.InlineKeyboardButton(
                 text='🎬 ЗАБРАТЬ МК «СДВИГ ОПТИКИ»', 
                 url=MASTERCLASS_URL
+            )
+        )
+        
+        # Вторая строка: Дополнительная кнопка для гайда
+        builder.row(
+            types.InlineKeyboardButton(
+                text='📥 ЕЩЕ РАЗ СКАЧАТЬ ГАЙД',
+                callback_data="download_guide_manual"
             )
         )
         
@@ -495,7 +536,7 @@ async def send_masterclass_button(message: types.Message):
             reply_markup=builder.as_markup()
         )
     except Exception as e:
-        logger.error(f"Ошибка отправки кнопки мастер-класса: {e}")
+        logger.error(f"Ошибка отправки кнопок: {e}")
         try:
             await message.answer(
                 "🎯 Ваш нейрокогнитивный аудит завершен!\n\n"
@@ -504,6 +545,47 @@ async def send_masterclass_button(message: types.Message):
             )
         except:
             pass
+
+@dp.callback_query(F.data == "download_guide_manual")
+async def handle_manual_download(callback: types.CallbackQuery):
+    """Обработчик ручного скачивания гайда"""
+    await callback.answer("Отправляю гайд...")
+    
+    try:
+        # Создаем клавиатуру
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            types.InlineKeyboardButton(
+                text="📥 СКАЧАТЬ ГАЙД",
+                url=GUIDE_URL
+            )
+        )
+        
+        # Отправляем сообщение с кнопкой
+        await callback.message.answer(
+            "📘 **Гайд «Ревизия маршрута»**\n\n"
+            "Нажмите кнопку ниже, чтобы скачать ваш персональный путеводитель:",
+            reply_markup=builder.as_markup(),
+            parse_mode="Markdown"
+        )
+        
+        # Дублируем как документ
+        try:
+            await callback.message.answer_document(
+                document=GUIDE_URL,
+                caption="📥 Ваш гайд «Ревизия маршрута»"
+            )
+        except Exception as doc_error:
+            logger.warning(f"Документ не отправлен: {doc_error}")
+            
+    except Exception as e:
+        logger.error(f"Ошибка ручного скачивания: {e}")
+        await callback.answer("Ошибка при отправке гайда", show_alert=True)
+        
+        # Прямая ссылка
+        await callback.message.answer(
+            f"📥 Ссылка для скачивания гайда:\n{GUIDE_URL}"
+        )
 
 @dp.callback_query(F.data == "download_guide")
 async def handle_download_guide(callback: types.CallbackQuery):
@@ -851,7 +933,7 @@ async def main():
         raise ValueError("BOT_TOKEN не установлен")
     
     if not CEREBRAS_API_KEY:
-        logger.warning("⚠️ AI_API_KEY не установлен! Будет использоваться демо-режим.")
+        logger.warning("⚠️ AI_API_KEY не установен! Будет использоваться демо-режим.")
     
     try:
         await bot.delete_webhook(drop_pending_updates=True)
@@ -892,4 +974,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.critical(f"Критическая ошибка при запуске: {e}")
         exit(1)
-
