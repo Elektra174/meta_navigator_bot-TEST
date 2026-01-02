@@ -1,5 +1,3 @@
-[file name]: main (2).py
-[file content begin]
 import os
 import asyncio
 import traceback
@@ -1004,4 +1002,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.critical(f"Критическая ошибка при запуске: {e}")
         exit(1)
-[file content end]
