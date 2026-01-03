@@ -21,7 +21,7 @@ CEREBRAS_API_KEY = os.getenv("AI_API_KEY")
 CHANNEL_ID = "@metaformula_life"
 ADMIN_ID = 7830322013
 
-# Ресурсы проекта
+# Ресурсы проекта - ПРОВЕРЬТЕ ЭТИ ССЫЛКИ!
 LOGO_FORMULA_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/logo.png"
 LOGO_NAVIGATOR_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/logo11.png"
 GUIDE_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/revizia_gid.pdf"
@@ -152,7 +152,18 @@ async def download_and_send_pdf(message: types.Message):
         async with ClientSession() as session:
             async with session.get(GUIDE_URL) as response:
                 if response.status != 200:
-                    raise Exception(f"Не удалось загрузить PDF. Статус: {response.status}")
+                    # Вместо исключения, логируем ошибку и предлагаем альтернативу
+                    logger.error(f"Не удалось загрузить PDF. Статус: {response.status}")
+                    
+                    # Предлагаем прямую ссылку
+                    await message.answer(
+                        f"⚠️ **Не удалось загрузить гайд автоматически.**\n\n"
+                        f"Пожалуйста, скачайте его вручную по ссылке:\n"
+                        f"{GUIDE_URL}",
+                        parse_mode="Markdown",
+                        disable_web_page_preview=True
+                    )
+                    return False
                 
                 pdf_data = await response.read()
         
@@ -178,10 +189,11 @@ async def download_and_send_pdf(message: types.Message):
     except Exception as e:
         logger.error(f"Ошибка отправки PDF: {e}")
         await message.answer(
-            "⚠️ **Не удалось загрузить гайд автоматически.**\n\n"
-            "Пожалуйста, скачайте его вручную по ссылке:\n"
+            f"⚠️ **Не удалось загрузить гайд автоматически.**\n\n"
+            f"Пожалуйста, скачайте его вручную по ссылке:\n"
             f"{GUIDE_URL}",
-            parse_mode="Markdown"
+            parse_mode="Markdown",
+            disable_web_page_preview=True
         )
         return False
 
@@ -265,13 +277,19 @@ def clean_report_for_telegram(report: str) -> str:
     # Убираем лишние пробелы и переносы
     report = re.sub(r'\n{3,}', '\n\n', report)
     
-    # Убираем markdown символы
+    # Убираем markdown символы, которые могут вызвать ошибку парсинга
     report = re.sub(r'\*\*(.*?)\*\*', r'\1', report)
     report = re.sub(r'\*(.*?)\*', r'\1', report)
-    report = report.replace('`', '')
+    report = report.replace('`', '').replace('_', '')
+    report = report.replace('[', '').replace(']', '')
     
     # Убираем HTML теги
     report = re.sub(r'<.*?>', '', report)
+    
+    # Экранируем специальные символы для Markdown
+    escape_chars = ['*', '_', '`', '[', ']', '(', ')', '~', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in escape_chars:
+        report = report.replace(char, f'\\{char}')
     
     return report
 
@@ -471,7 +489,9 @@ async def process_answer(message: types.Message, state: FSMContext):
                 # Генерируем фолбэк отчет с правильной формулой
                 fallback_report = generate_fallback_report(user_answers, index)
                 
-                await message.answer(fallback_report)
+                # Очищаем отчет перед отправкой
+                clean_fallback_report = clean_report_for_telegram(fallback_report)
+                await message.answer(clean_fallback_report)
                 # СРАЗУ отправляем PDF гайд в чат
                 await download_and_send_pdf(message)
                 await send_masterclass_button(message)
@@ -542,7 +562,8 @@ async def handle_manual_download(callback: types.CallbackQuery):
         
         # Прямая ссылка как запасной вариант
         await callback.message.answer(
-            f"📥 Ссылка для скачивания гайда:\n{GUIDE_URL}"
+            f"📥 Ссылка для скачивания гайда:\n{GUIDE_URL}",
+            disable_web_page_preview=True
         )
 
 def calculate_automatism_index(answers: list) -> int:
@@ -763,7 +784,7 @@ def extract_shadow_role(answers: list) -> str:
                     if len(quality) > 3:  # Если слово достаточно длинное
                         return f"быть человеком, который преодолевает {quality}"
     
-    return "быть человеком, который уважает свои границы"  # значение по умолчанию
+    return "быть человеком, который уважает свои границы"  # значение по умолоданию
 
 def generate_metaformula_from_answers(answers: list) -> str:
     """Генерирует метаформулу по алгоритму Identity Shift Protocol"""
@@ -965,6 +986,11 @@ def postprocess_report(report: str, answers: list) -> str:
         report = re.sub(r'\bон\b', 'Вы', report, flags=re.IGNORECASE)
         report = re.sub(r'\bона\b', 'Вы', report, flags=re.IGNORECASE)
         
+        # Экранируем специальные символы Markdown
+        escape_chars = ['*', '_', '`', '[', ']', '(', ')', '~', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+        for char in escape_chars:
+            report = report.replace(char, f'\\{char}')
+        
         return report
         
     except Exception as e:
@@ -1042,6 +1068,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.critical(f"Критическая ошибка при запуске: {e}")
         exit(1)
-
-
-
