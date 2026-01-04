@@ -223,7 +223,7 @@ async def send_mk_shift_message(message: types.Message):
         mk_message = (
             "🎯 **Диагностика завершена. Лимиты обнаружены.**\n\n"
             "Вы получили свою Метаформулу — это ваша «горячая клавиша» для перехвата управления у Автопилота. "
-            "Но чтобы инструмент стал вашим рефлексом, нужна практическая рекалибровка.\n\n"
+            "Но чтобы этот код стал вашим внутренним компасом, нужна практическая рекалибровка.\n\n"
             "Чтобы физически закрепить Сдвиг Роли и получить полный Аудио-код «Перехватчик», заберите пакет инструментов:\n\n"
             "• 🎬 **Мастер-класс «СДВИГ ОПТИКИ»**\n"
             "• **Аудио-код «Перехватчик Автопилота»**\n"
@@ -556,7 +556,7 @@ async def start_audit_flow(callback: types.CallbackQuery, state: FSMContext):
         )
         
         await asyncio.sleep(1)
-        await callback.message.answer(f"📝 **Шаг 1 из {len(QUESTIONS)}:**\n\n{QUESTIONS[0]}")
+        await callback.message.answer(f"📝 Шаг 1 из {len(QUESTIONS)}:\n\n{QUESTIONS[0]}")
         await state.set_state(AuditState.answering_questions)
         
     except Exception as e:
@@ -641,7 +641,7 @@ async def process_answer(message: types.Message, state: FSMContext):
 
         if next_step < len(QUESTIONS):
             await state.update_data(current_step=next_step, answers=user_answers)
-            await message.answer(f"📝 **Шаг {next_step + 1} из {len(QUESTIONS)}:**\n\n{QUESTIONS[next_step]}")
+            await message.answer(f"📝 Шаг {next_step + 1} из {len(QUESTIONS)}:\n\n{QUESTIONS[next_step]}")
         else:
             # ФИНАЛ - ОДИН РАЗ ОТПРАВЛЯЕМ ОТЧЕТ И PDF
             await state.update_data(answers=user_answers)
@@ -1043,3 +1043,4 @@ if __name__ == "__main__":
     except Exception as e:
         logger.critical(f"Критическая ошибка при запуске: {e}")
         exit(1)
+
