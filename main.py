@@ -24,8 +24,8 @@ ADMIN_ID = 7830322013
 # Ресурсы проекта
 LOGO_FORMULA_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/logo.png.png"
 LOGO_NAVIGATOR_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot/main/logo11.png"
-GUIDE_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot-TEST/main/revizia_guide.pdf"
-GUIDE_FILENAME = "Ревизия_Маршрута_Метаформула.pdf"
+GUIDE_URL = "https://raw.githubusercontent.com/Elektra174/meta_navigator_bot-TEST/main/avtopilot.pdf"
+GUIDE_FILENAME = "Дешифровка_Автопилота.pdf"
 MASTERCLASS_URL = "https://youtube.com/playlist?list=PLyour_playlist_id"
 CHANNEL_URL = "https://t.me/metaformula_life"
 
@@ -1090,3 +1090,4 @@ if __name__ == "__main__":
     except Exception as e:
         logger.critical(f"Критическая ошибка при запуске: {e}")
         exit(1)
+
